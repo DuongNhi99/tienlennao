@@ -1,0 +1,45 @@
+@import 'tailwindcss';
+
+/* Design tokens. The full design system is built in Phase 2. */
+@theme {
+  --color-felt-950: #04261a;
+  --color-felt-900: #073823;
+  --color-felt-800: #0b4a2f;
+  --color-felt-700: #0f5d3b;
+  --color-felt-600: #13724a;
+  --color-gold-300: #f7d77f;
+  --color-gold-400: #f2c450;
+  --color-gold-500: #dba631;
+  --color-card: #fdfcf8;
+  --color-suit-red: #c62828;
+  --color-suit-black: #1d1d1f;
+
+  --font-sans:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial, sans-serif;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply min-h-dvh bg-felt-900 font-sans text-white antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-gold-400;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

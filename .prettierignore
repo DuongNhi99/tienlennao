@@ -1,0 +1,9 @@
+pnpm-lock.yaml
+node_modules
+dist
+coverage
+.next
+.local
+next-env.d.ts
+apps/server/prisma/migrations/**/*.sql
+master-prompt-tien-len-nextjs-pwa.md

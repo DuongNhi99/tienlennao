@@ -1,0 +1,40 @@
+{
+  "name": "tien-len-online",
+  "private": true,
+  "description": "Tiến Lên Online — Vietnamese multiplayer card game (Next.js PWA + NestJS)",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build:shared": "pnpm --filter @tienlen/shared build",
+    "dev": "pnpm build:shared && pnpm -r --parallel --stream dev",
+    "dev:web": "pnpm --filter @tienlen/web dev",
+    "dev:server": "pnpm --filter @tienlen/server dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm build:shared && eslint . && pnpm -r lint",
+    "typecheck": "pnpm build:shared && pnpm -r typecheck",
+    "test": "pnpm build:shared && pnpm -r test",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @tienlen/server db:generate",
+    "db:migrate": "pnpm --filter @tienlen/server db:migrate",
+    "db:deploy": "pnpm --filter @tienlen/server db:deploy",
+    "db:seed": "pnpm --filter @tienlen/server db:seed",
+    "db:studio": "pnpm --filter @tienlen/server db:studio",
+    "db:embedded": "node scripts/embedded-postgres.mjs",
+    "services:up": "docker compose up -d postgres redis",
+    "services:down": "docker compose down"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "embedded-postgres": "17.10.0-beta.17",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.2",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.0"
+  }
+}

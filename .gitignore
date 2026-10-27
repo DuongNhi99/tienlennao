@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment files (never commit real credentials)
+.env
+.env.*
+!.env.example
+
+# Local data (embedded PostgreSQL fallback, etc.)
+.local/
+
+npm-debug.log*
+pnpm-debug.log*
+.DS_Store
