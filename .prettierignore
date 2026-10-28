@@ -7,3 +7,5 @@ coverage
 next-env.d.ts
 apps/server/prisma/migrations/**/*.sql
 master-prompt-tien-len-nextjs-pwa.md
+test-results
+playwright-report

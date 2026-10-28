@@ -57,7 +57,10 @@ export default async function StatusPage() {
   const apiStatus: RowStatus = result.kind === 'unreachable' ? 'down' : 'up';
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-6 px-6 py-16">
+    <main
+      id="main"
+      className="mx-auto flex w-full max-w-xl flex-col justify-center gap-6 px-4 py-12 sm:px-6"
+    >
       <h1 className="text-3xl font-bold">Trạng thái hệ thống</h1>
 
       <section

@@ -91,40 +91,68 @@ All variables live in one root `.env` (see [.env.example](.env.example)). The se
 its environment with Zod at startup and refuses to boot when it is invalid. The error lists
 variable names, never their values.
 
-| Variable              | Used by        | Required | Default                        | Notes                                        |
-| --------------------- | -------------- | -------- | ------------------------------ | -------------------------------------------- |
-| `DATABASE_URL`        | server, Prisma | yes      | —                              | `postgresql://…`                             |
-| `REDIS_URL`           | server         | no       | `redis://localhost:6379`       | `redis://` or `rediss://`                    |
-| `PORT`                | server         | no       | `4000`                         |                                              |
-| `WEB_ORIGIN`          | server         | no       | `http://localhost:3000`        | Comma-separated CORS allow-list (http/https) |
-| `LOG_LEVEL`           | server         | no       | `info`                         | `silent` … `trace`                           |
-| `NEXT_PUBLIC_API_URL` | web (browser)  | no       | `http://localhost:4000/api/v1` | Inlined at build time                        |
-| `API_INTERNAL_URL`    | web (server)   | no       | `NEXT_PUBLIC_API_URL`          | API base URL from inside the network         |
-| `POSTGRES_*`          | docker compose | no       | see `.env.example`             | Must match `DATABASE_URL`                    |
+| Variable                 | Used by        | Required | Default                        | Notes                                        |
+| ------------------------ | -------------- | -------- | ------------------------------ | -------------------------------------------- |
+| `DATABASE_URL`           | server, Prisma | yes      | —                              | `postgresql://…`                             |
+| `REDIS_URL`              | server         | no       | `redis://localhost:6379`       | `redis://` or `rediss://`                    |
+| `PORT`                   | server         | no       | `4000`                         |                                              |
+| `WEB_ORIGIN`             | server         | no       | `http://localhost:3000`        | Comma-separated CORS allow-list (http/https) |
+| `LOG_LEVEL`              | server         | no       | `info`                         | `silent` … `trace`                           |
+| `NEXT_PUBLIC_API_URL`    | web (browser)  | no       | `http://localhost:4000/api/v1` | Inlined at build time                        |
+| `API_INTERNAL_URL`       | web (server)   | no       | `NEXT_PUBLIC_API_URL`          | API base URL from inside the network         |
+| `NEXT_PUBLIC_UI_PREVIEW` | web (build)    | no       | `false`                        | Mock data on signed-in screens; never deploy |
+| `POSTGRES_*`             | docker compose | no       | see `.env.example`             | Must match `DATABASE_URL`                    |
 
 External services that will need credentials in later phases (email delivery, Google OAuth,
 web push/VAPID) are documented here as each is implemented. None are required for Phase 1.
 
 ## Commands
 
-| Command            | What it does                                                        |
-| ------------------ | ------------------------------------------------------------------- |
-| `pnpm dev`         | Build shared, then run shared (watch), server (watch), web (dev)    |
-| `pnpm build`       | Production build of all packages (topological order)                |
-| `pnpm check`       | format:check + lint + typecheck + test                              |
-| `pnpm lint`        | ESLint (type-aware for server/shared; Next rules for web)           |
-| `pnpm typecheck`   | `tsc --noEmit` everywhere (web runs `next typegen` first)           |
-| `pnpm test`        | Vitest in every package                                             |
-| `pnpm format`      | Prettier write                                                      |
-| `pnpm db:migrate`  | `prisma migrate dev` (create and apply migrations in development)   |
-| `pnpm db:deploy`   | `prisma migrate deploy` (apply committed migrations; CI/production) |
-| `pnpm db:seed`     | Idempotent seed of reference data                                   |
-| `pnpm db:studio`   | Prisma Studio                                                       |
-| `pnpm db:embedded` | Docker-less PostgreSQL (dev only, data in `.local/pgdata`)          |
-| `pnpm services:up` | Start PostgreSQL + Redis containers                                 |
+| Command                               | What it does                                                        |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `pnpm dev`                            | Build shared, then run shared (watch), server (watch), web (dev)    |
+| `pnpm build`                          | Production build of all packages (topological order)                |
+| `pnpm check`                          | format:check + lint + typecheck + test                              |
+| `pnpm lint`                           | ESLint (type-aware for server/shared; Next rules for web)           |
+| `pnpm typecheck`                      | `tsc --noEmit` everywhere (web runs `next typegen` first)           |
+| `pnpm test`                           | Vitest in every package                                             |
+| `pnpm format`                         | Prettier write                                                      |
+| `pnpm db:migrate`                     | `prisma migrate dev` (create and apply migrations in development)   |
+| `pnpm db:deploy`                      | `prisma migrate deploy` (apply committed migrations; CI/production) |
+| `pnpm db:seed`                        | Idempotent seed of reference data                                   |
+| `pnpm db:studio`                      | Prisma Studio                                                       |
+| `pnpm db:embedded`                    | Docker-less PostgreSQL (dev only, data in `.local/pgdata`)          |
+| `pnpm services:up`                    | Start PostgreSQL + Redis containers                                 |
+| `pnpm --filter @tienlen/web test:e2e` | Playwright: production build in preview mode, 3 viewports           |
+| `pnpm --filter @tienlen/web icons`    | Regenerate the PWA PNG icons from `apps/web/assets/logo.svg`        |
 
 Production start: `pnpm --filter @tienlen/server start` (runs `dist/main.js`) and
 `pnpm --filter @tienlen/web start`.
+
+Playwright needs Chromium once: `pnpm --filter @tienlen/web exec playwright install chromium`.
+Set `E2E_SCREENSHOT_DIR` to save screenshots of the main screens for visual review.
+
+## UI preview mode and PWA (Phase 2)
+
+The signed-in screens (lobby, waiting room, game table, profile, …) need the backend from
+Phases 3 and 5. Until then they run only in **UI preview mode**: build or start the web app
+with `NEXT_PUBLIC_UI_PREVIEW=true` and they use the in-memory mock in
+`apps/web/lib/dev-preview/`, with a visible "preview" banner on every screen. Without the
+flag, those routes redirect to `/login`. The login and registration forms always call the
+real API; they do not fake success. The mock does not validate card combinations (Phase 4),
+and its bots only play single cards.
+
+PWA behaviour:
+
+- Manifest at `/manifest.webmanifest` (standalone, starts at `/lobby`), 192/512 px and
+  maskable icons, and an Apple touch icon.
+- Service worker at `/sw.js`, versioned by the build ID (`BUILD_ID`, otherwise the git
+  commit). Hashed static assets are cache-first. Page navigations are network-only and fall
+  back to a pre-cached `/offline` page. HTML and API responses are never cached, because
+  signed-in pages contain private data.
+- Install prompt: browsers that fire `beforeinstallprompt` (Chrome, Edge, Android) get an
+  install button. iOS/iPadOS Safari gets "Share → Add to Home Screen" instructions. Other
+  browsers show nothing.
 
 ## API conventions (implemented so far)
 
@@ -175,13 +203,16 @@ Integrity is enforced in the database, not only in application code:
 - History-bearing relations use `onDelete: Restrict`, and users are soft-deleted.
 - Retention defaults are documented at the top of the schema.
 
-## Known limitations (Phase 1)
+## Known limitations
 
 - No Redis on the development machine used to verify Phase 1, so readiness was observed as
   `degraded`. The Redis code path is covered by the stubbed e2e tests only.
 - Docker files were written but not executed on the verification machine, which has no Docker.
   CI runs against real PostgreSQL and Redis service containers.
-- The landing page is a placeholder; the real UI arrives in Phase 2.
+- Signed-in screens work only in UI preview mode until Phases 3 (auth) and 5 (rooms) land.
+  Wallet, history, leaderboard and notification pages are placeholders for Phases 6–7.
+- Installability and offline behaviour are tested automatically in Chromium only, the one
+  browser installed on the verification machine. iOS Safari and Firefox were not tested.
 - On Windows, stop `pnpm db:embedded` with Ctrl+C. If the process is killed instead, stop the
   orphaned server with `pg_ctl -D .local/pgdata stop` (the binary is under
   `node_modules/.pnpm/@embedded-postgres+windows-x64*/…/native/bin`).

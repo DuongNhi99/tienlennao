@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 
-/* Design tokens. The full design system is built in Phase 2. */
+/* Design tokens. */
 @theme {
   --color-felt-950: #04261a;
   --color-felt-900: #073823;
@@ -16,6 +16,17 @@
 
   --font-sans:
     system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial, sans-serif;
+}
+
+/*
+ * Full-viewport screens use these instead of h-dvh/min-h-dvh so a fixed-height banner above them
+ * (the UI preview banner sets --top-banner-h) never pushes their bottom edge off-screen.
+ */
+@utility h-screen-fit {
+  height: calc(100dvh - var(--top-banner-h, 0px));
+}
+@utility min-h-screen-fit {
+  min-height: calc(100dvh - var(--top-banner-h, 0px));
 }
 
 @layer base {

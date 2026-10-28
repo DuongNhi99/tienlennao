@@ -20,11 +20,33 @@ Legend: ✅ done and verified · 🟡 partial · ⏳ pending · ⛔ blocked
 | CI pipeline                        | 🟡     | Written; not yet run (the repository is not on GitHub yet)                                       |
 | Seed                               | ✅     | Idempotent; verified by running it twice                                                         |
 
-## Phase 2 — UI and PWA ⏳
+## Phase 2 — UI and PWA ✅
 
-Design system, landing page, login/registration screens, lobby, waiting room, responsive
-game table (development mock data behind an explicit boundary), manifest, icons, service
-worker, offline fallback, install prompts.
+Playwright runs against a production build in three projects: phone 360×740 (touch), tablet
+820×1180 (touch) and desktop 1366×820. Verified with `--repeat-each=2`: 90 runs, 90 passed.
+
+| Item                                | Status | Evidence                                                                                                |
+| ----------------------------------- | ------ | ------------------------------------------------------------------------------------------------------- |
+| Design system                       | ✅     | Tokens in `globals.css`; `components/ui` (button, fields, modal, confirm, toasts, states)               |
+| Landing, terms, privacy, 404/error  | ✅     | `public.spec.ts`; no horizontal overflow at any viewport                                                |
+| Login, registration, password reset | ✅     | Client validation with shared Zod schemas and Vietnamese messages; submissions call the real API        |
+| Lobby                               | ✅     | Rooms with filters, quick play, join by code, daily reward, top 5, notifications (`lobby.spec.ts`)      |
+| Waiting room                        | ✅     | Create a private room, seats, ready, leave with confirmation                                            |
+| Responsive game table               | ✅     | Hand fits without scrolling; controls stay inside the viewport; touch multi-select (`game.spec.ts`)     |
+| Mock data boundary                  | ✅     | `lib/dev-preview/`, only with `NEXT_PUBLIC_UI_PREVIEW=true`; banner on every screen; otherwise `/login` |
+| Manifest and icons                  | ✅     | 192/512/maskable PNGs and Apple touch icon served (`pwa.spec.ts`)                                       |
+| Service worker, offline fallback    | ✅     | Versioned `/sw.js` (`no-cache`); offline navigation shows a styled `/offline` page                      |
+| Install prompts                     | 🟡     | `beforeinstallprompt` button plus iOS instructions; automated tests in Chromium only (see README)       |
+| Placeholder screens                 | 🟡     | Wallet, history, leaderboard and notifications pages wait for Phases 6–7                                |
+
+Fixes made while verifying Phase 2:
+
+- Registration and reset forms now report a password mismatch even while another field (for
+  example the terms checkbox) is invalid. Zod 4 skipped the refinement before.
+- The header balance link announced only "Ví xu". Its accessible name now includes the balance.
+- Card selection survives opponents' moves. Only cards that leave the hand drop out of it.
+- Full-height screens (game table, app shell) subtract the preview banner's height
+  (`h-screen-fit`), so the bottom of the hand is no longer cut off.
 
 ## Phase 3 — Authentication and profile ⏳
 
