@@ -4,7 +4,12 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { ChevronRight, Clock, Gift, Trophy } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { EmptyState, ErrorState, LoadingRegion, LoadingSkeleton } from '@/components/ui/states';
+import {
+  EmptyState,
+  QueryErrorState,
+  LoadingRegion,
+  LoadingSkeleton,
+} from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { LeaderboardTable } from '@/features/leaderboard/leaderboard-table';
@@ -66,7 +71,7 @@ export function DailyRewardPanel() {
           <LoadingSkeleton className="h-20" />
         </LoadingRegion>
       ) : reward.isError ? (
-        <ErrorState message={errorMessage(reward.error)} onRetry={() => void reward.refetch()} />
+        <QueryErrorState error={reward.error} onRetry={() => void reward.refetch()} />
       ) : (
         <div className="flex flex-col gap-3">
           <ol
@@ -135,7 +140,7 @@ export function LeaderboardPreview() {
           <LoadingSkeleton className="h-40" />
         </LoadingRegion>
       ) : board.isError ? (
-        <ErrorState message={errorMessage(board.error)} onRetry={() => void board.refetch()} />
+        <QueryErrorState error={board.error} onRetry={() => void board.refetch()} />
       ) : board.data.length === 0 ? (
         <EmptyState icon={Trophy} title="Chưa có dữ liệu xếp hạng tuần này" />
       ) : (

@@ -27,6 +27,40 @@ export const envSchema = z.object({
     .regex(/^rediss?:\/\//, 'must be a redis:// or rediss:// URL')
     .default('redis://localhost:6379'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+
+  /** Number of reverse proxies in front of the API whose X-Forwarded-For is trusted. */
+  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
+  /** Public web app URL used in email links. Defaults to the first WEB_ORIGIN. */
+  WEB_APP_URL: z
+    .url({ protocol: /^https?$/ })
+    .transform((url) => url.replace(/\/+$/, ''))
+    .optional(),
+  /** Sessions expire after this many days without activity (sliding), capped at 3× overall. */
+  SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
+  /**
+   * Cookie Domain attribute. Leave unset when web and API share a host; set it to the parent
+   * domain (e.g. `tienlen.example`) when they run on sibling subdomains.
+   */
+  COOKIE_DOMAIN: z.string().min(1).optional(),
+  /** Coins granted once when an account is created (ledger type INITIAL_BONUS). */
+  INITIAL_COIN_BONUS: z.coerce.number().int().min(0).max(1_000_000).default(10_000),
+
+  /** smtp:// or smtps:// URL. Without it, development writes emails to MAIL_OUTBOX_DIR. */
+  SMTP_URL: z
+    .string()
+    .regex(/^smtps?:\/\//, 'must be an smtp:// or smtps:// URL')
+    .optional(),
+  MAIL_FROM: z.string().min(3).default('Tiến Lên Online <no-reply@tienlen.local>'),
+  /** Development-only outbox for emails when SMTP_URL is not set. Never used in production. */
+  MAIL_OUTBOX_DIR: z.string().min(1).default('.local/mail'),
+
+  /** Public API base URL (with /api/v1) used in avatar links. Defaults to localhost:PORT. */
+  API_PUBLIC_URL: z
+    .url({ protocol: /^https?$/ })
+    .transform((url) => url.replace(/\/+$/, ''))
+    .optional(),
+  /** Where re-encoded avatar images are stored. Must be shared storage when scaled out. */
+  UPLOAD_DIR: z.string().min(1).default('.local/uploads'),
 });
 
 export type Env = z.infer<typeof envSchema>;

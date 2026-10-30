@@ -8,6 +8,7 @@ import { type ReactNode, useState } from 'react';
 import { CoinBalance } from '@/components/player/coin-balance';
 import { UserAvatar } from '@/components/player/user-avatar';
 import { Logo } from '@/components/ui/logo';
+import { EmailVerificationBanner, LogoutButton } from '@/features/auth/account-controls';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { NotificationPanel } from '@/features/notifications/notification-panel';
@@ -87,9 +88,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                 />
               </Link>
             ) : null}
+            <LogoutButton />
           </div>
         </div>
       </header>
+      <EmailVerificationBanner />
 
       <main
         id="main"

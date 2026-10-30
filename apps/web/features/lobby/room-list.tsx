@@ -7,7 +7,12 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { CheckboxField, SelectField } from '@/components/ui/form-fields';
-import { EmptyState, ErrorState, LoadingRegion, LoadingSkeleton } from '@/components/ui/states';
+import {
+  EmptyState,
+  QueryErrorState,
+  LoadingRegion,
+  LoadingSkeleton,
+} from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { errorMessage } from '@/lib/api/client';
@@ -156,7 +161,7 @@ export function RoomList() {
           </div>
         </LoadingRegion>
       ) : rooms.isError ? (
-        <ErrorState message={errorMessage(rooms.error)} onRetry={() => void rooms.refetch()} />
+        <QueryErrorState error={rooms.error} onRetry={() => void rooms.refetch()} />
       ) : rooms.data.length === 0 ? (
         <EmptyState
           icon={LayoutGrid}

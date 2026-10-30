@@ -2,7 +2,12 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { ButtonLink } from '@/components/ui/button';
-import { ErrorState, LoadingRegion, LoadingSkeleton } from '@/components/ui/states';
+import {
+  ErrorState,
+  QueryErrorState,
+  LoadingRegion,
+  LoadingSkeleton,
+} from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { ApiClientError, errorMessage } from '@/lib/api/client';
@@ -41,12 +46,19 @@ export function RoomScreen({ roomId }: { roomId: string }) {
         id="main"
         className="mx-auto flex min-h-[60dvh] max-w-md flex-col items-center justify-center gap-4 px-6"
       >
-        <ErrorState
-          title={notFound ? 'Không vào được phòng' : undefined}
-          message={errorMessage(room.error)}
-          onRetry={notFound ? undefined : () => void room.refetch()}
-          className="w-full"
-        />
+        {notFound ? (
+          <ErrorState
+            title="Không vào được phòng"
+            message={errorMessage(room.error)}
+            className="w-full"
+          />
+        ) : (
+          <QueryErrorState
+            error={room.error}
+            onRetry={() => void room.refetch()}
+            className="w-full"
+          />
+        )}
         <ButtonLink href="/lobby" variant="secondary">
           Về sảnh
         </ButtonLink>

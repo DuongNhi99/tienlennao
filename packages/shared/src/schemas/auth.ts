@@ -94,3 +94,12 @@ export type ResetPasswordRequest = z.infer<typeof resetPasswordRequestSchema>;
 export const resetPasswordFormSchema = resetPasswordRequestSchema
   .extend({ confirmPassword: confirmPasswordSchema })
   .refine(passwordsMatch, passwordsMatchParams);
+
+export const verifyEmailRequestSchema = z.object({
+  token: z.string().min(16, 'Liên kết xác minh không hợp lệ.').max(256),
+});
+export type VerifyEmailRequest = z.infer<typeof verifyEmailRequestSchema>;
+
+/** PATCH /users/me. Only the display name is editable here; avatars use their own endpoint. */
+export const updateProfileRequestSchema = z.object({ displayName: displayNameSchema });
+export type UpdateProfileRequest = z.infer<typeof updateProfileRequestSchema>;

@@ -5,7 +5,12 @@ import type { NotificationItem } from '@tienlen/shared';
 import { Bell, CheckCheck, Gift, ShieldAlert, Trophy, Users, Megaphone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
-import { EmptyState, ErrorState, LoadingRegion, LoadingSkeleton } from '@/components/ui/states';
+import {
+  EmptyState,
+  QueryErrorState,
+  LoadingRegion,
+  LoadingSkeleton,
+} from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { useNow } from '@/hooks/use-now';
@@ -60,8 +65,8 @@ export function NotificationPanel({ open, onClose }: { open: boolean; onClose: (
             </div>
           </LoadingRegion>
         ) : notifications.isError ? (
-          <ErrorState
-            message={errorMessage(notifications.error)}
+          <QueryErrorState
+            error={notifications.error}
             onRetry={() => void notifications.refetch()}
           />
         ) : items.length === 0 ? (

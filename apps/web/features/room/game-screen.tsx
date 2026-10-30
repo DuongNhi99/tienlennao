@@ -18,7 +18,7 @@ import { MatchResultModal } from '@/components/game/match-result-modal';
 import { PlayerSeat } from '@/components/game/player-seat';
 import { TurnIndicator } from '@/components/game/turn-indicator';
 import { Button, ButtonLink } from '@/components/ui/button';
-import { ErrorState, LoadingSkeleton } from '@/components/ui/states';
+import { QueryErrorState, LoadingSkeleton } from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { ApiClientError, errorMessage } from '@/lib/api/client';
@@ -91,8 +91,8 @@ export function GameScreen({ room }: { room: RoomDetail }) {
   if (game.isError) {
     return (
       <main id="main" className="mx-auto flex h-screen-fit max-w-md items-center px-6">
-        <ErrorState
-          message={errorMessage(game.error)}
+        <QueryErrorState
+          error={game.error}
           onRetry={() => void game.refetch()}
           className="w-full"
         />

@@ -13,6 +13,7 @@ export const ERROR_CODES = [
   'EMAIL_ALREADY_EXISTS',
   'SESSION_EXPIRED',
   'ACCOUNT_SUSPENDED',
+  'INVALID_TOKEN',
   'ROOM_NOT_FOUND',
   'ROOM_FULL',
   'ROOM_ALREADY_STARTED',
@@ -30,6 +31,7 @@ export const ERROR_CODES = [
   'CONNECTION_LOST',
   'RATE_LIMITED',
   'SERVICE_UNAVAILABLE',
+  'FEATURE_UNAVAILABLE',
   'INTERNAL_ERROR',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -44,6 +46,7 @@ export const ERROR_MESSAGES_VI: Readonly<Record<ErrorCode, string>> = {
   EMAIL_ALREADY_EXISTS: 'Email này đã được sử dụng.',
   SESSION_EXPIRED: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
   ACCOUNT_SUSPENDED: 'Tài khoản của bạn đang bị tạm khóa.',
+  INVALID_TOKEN: 'Liên kết không hợp lệ hoặc đã hết hạn.',
   ROOM_NOT_FOUND: 'Không tìm thấy phòng.',
   ROOM_FULL: 'Phòng đã đủ người.',
   ROOM_ALREADY_STARTED: 'Phòng đã bắt đầu ván đấu.',
@@ -61,6 +64,7 @@ export const ERROR_MESSAGES_VI: Readonly<Record<ErrorCode, string>> = {
   CONNECTION_LOST: 'Mất kết nối tới máy chủ. Đang thử kết nối lại…',
   RATE_LIMITED: 'Bạn thao tác quá nhanh. Vui lòng thử lại sau.',
   SERVICE_UNAVAILABLE: 'Máy chủ tạm thời không khả dụng. Vui lòng thử lại sau.',
+  FEATURE_UNAVAILABLE: 'Tính năng này đang được phát triển và sẽ sớm ra mắt.',
   INTERNAL_ERROR: 'Đã xảy ra lỗi. Vui lòng thử lại sau.',
 };
 

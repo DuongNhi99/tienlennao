@@ -102,29 +102,50 @@ variable names, never their values.
 | `API_INTERNAL_URL`       | web (server)   | no       | `NEXT_PUBLIC_API_URL`          | API base URL from inside the network         |
 | `NEXT_PUBLIC_UI_PREVIEW` | web (build)    | no       | `false`                        | Mock data on signed-in screens; never deploy |
 | `POSTGRES_*`             | docker compose | no       | see `.env.example`             | Must match `DATABASE_URL`                    |
+| `TRUST_PROXY`            | server         | no       | `0`                            | Reverse proxies whose X-Forwarded-For counts |
+| `WEB_APP_URL`            | server         | no       | first `WEB_ORIGIN`             | Base of links in emails                      |
+| `API_PUBLIC_URL`         | server         | no       | `http://localhost:PORT/api/v1` | Base of avatar URLs                          |
+| `SESSION_TTL_DAYS`       | server         | no       | `30`                           | Idle timeout; absolute limit is 3×           |
+| `COOKIE_DOMAIN`          | server         | no       | host-only                      | Parent domain if web/API are on subdomains   |
+| `INITIAL_COIN_BONUS`     | server         | no       | `10000`                        | Coins credited once at registration          |
+| `SMTP_URL`               | server         | prod     | —                              | `smtp://` or `smtps://`; see below           |
+| `MAIL_FROM`              | server         | no       | `Tiến Lên Online <no-reply@…>` |                                              |
+| `MAIL_OUTBOX_DIR`        | server         | no       | `.local/mail`                  | Dev outbox (relative to the API's directory) |
+| `UPLOAD_DIR`             | server         | no       | `.local/uploads`               | Avatars; shared storage when scaled out      |
 
-External services that will need credentials in later phases (email delivery, Google OAuth,
-web push/VAPID) are documented here as each is implemented. None are required for Phase 1.
+**Email.** With `SMTP_URL` set, emails go through SMTP. Without it, development writes each
+email as a text file to `MAIL_OUTBOX_DIR` (`apps/server/.local/mail` under `pnpm dev`), so you
+can open verification and reset links. In production without SMTP nothing is sent, and a
+warning is logged at startup. Links are never written to the logs.
+
+**Cookies across web and API.** The browser must send `tl_session` to both the API and the
+web server (which checks the session before rendering signed-in pages). This works when both
+run on the same host (as in development), or on sibling subdomains with
+`COOKIE_DOMAIN=<parent domain>`. Web push/VAPID and Google OAuth credentials will be documented
+when those features are built.
 
 ## Commands
 
-| Command                               | What it does                                                        |
-| ------------------------------------- | ------------------------------------------------------------------- |
-| `pnpm dev`                            | Build shared, then run shared (watch), server (watch), web (dev)    |
-| `pnpm build`                          | Production build of all packages (topological order)                |
-| `pnpm check`                          | format:check + lint + typecheck + test                              |
-| `pnpm lint`                           | ESLint (type-aware for server/shared; Next rules for web)           |
-| `pnpm typecheck`                      | `tsc --noEmit` everywhere (web runs `next typegen` first)           |
-| `pnpm test`                           | Vitest in every package                                             |
-| `pnpm format`                         | Prettier write                                                      |
-| `pnpm db:migrate`                     | `prisma migrate dev` (create and apply migrations in development)   |
-| `pnpm db:deploy`                      | `prisma migrate deploy` (apply committed migrations; CI/production) |
-| `pnpm db:seed`                        | Idempotent seed of reference data                                   |
-| `pnpm db:studio`                      | Prisma Studio                                                       |
-| `pnpm db:embedded`                    | Docker-less PostgreSQL (dev only, data in `.local/pgdata`)          |
-| `pnpm services:up`                    | Start PostgreSQL + Redis containers                                 |
-| `pnpm --filter @tienlen/web test:e2e` | Playwright: production build in preview mode, 3 viewports           |
-| `pnpm --filter @tienlen/web icons`    | Regenerate the PWA PNG icons from `apps/web/assets/logo.svg`        |
+| Command                                    | What it does                                                               |
+| ------------------------------------------ | -------------------------------------------------------------------------- |
+| `pnpm dev`                                 | Build shared, then run shared (watch), server (watch), web (dev)           |
+| `pnpm build`                               | Production build of all packages (topological order)                       |
+| `pnpm check`                               | format:check + lint + typecheck + test                                     |
+| `pnpm lint`                                | ESLint (type-aware for server/shared; Next rules for web)                  |
+| `pnpm typecheck`                           | `tsc --noEmit` everywhere (web runs `next typegen` first)                  |
+| `pnpm test`                                | Vitest in every package                                                    |
+| `pnpm format`                              | Prettier write                                                             |
+| `pnpm db:migrate`                          | `prisma migrate dev` (create and apply migrations in development)          |
+| `pnpm db:deploy`                           | `prisma migrate deploy` (apply committed migrations; CI/production)        |
+| `pnpm db:seed`                             | Idempotent seed of reference data                                          |
+| `pnpm db:studio`                           | Prisma Studio                                                              |
+| `pnpm db:embedded`                         | Docker-less PostgreSQL (dev only, data in `.local/pgdata`)                 |
+| `pnpm services:up`                         | Start PostgreSQL + Redis containers                                        |
+| `pnpm test:integration`                    | API + real PostgreSQL (database `<name>_test`, created and emptied)        |
+| `pnpm db:set-role <email> ADMIN`           | Grant (or with `PLAYER`, remove) the admin role; audited                   |
+| `pnpm --filter @tienlen/web test:e2e`      | Playwright: production build in preview mode, 3 viewports                  |
+| `pnpm --filter @tienlen/web test:e2e:auth` | Playwright against the real API on ports 3200/4100 (`<name>_e2e` database) |
+| `pnpm --filter @tienlen/web icons`         | Regenerate the PWA PNG icons from `apps/web/assets/logo.svg`               |
 
 Production start: `pnpm --filter @tienlen/server start` (runs `dist/main.js`) and
 `pnpm --filter @tienlen/web start`.
@@ -134,13 +155,12 @@ Set `E2E_SCREENSHOT_DIR` to save screenshots of the main screens for visual revi
 
 ## UI preview mode and PWA (Phase 2)
 
-The signed-in screens (lobby, waiting room, game table, profile, …) need the backend from
-Phases 3 and 5. Until then they run only in **UI preview mode**: build or start the web app
-with `NEXT_PUBLIC_UI_PREVIEW=true` and they use the in-memory mock in
-`apps/web/lib/dev-preview/`, with a visible "preview" banner on every screen. Without the
-flag, those routes redirect to `/login`. The login and registration forms always call the
-real API; they do not fake success. The mock does not validate card combinations (Phase 4),
-and its bots only play single cards.
+Normally the signed-in screens need a real account (Phase 3). Rooms and matches arrive in
+Phase 5, so to work on those screens before then, build or start the web app with
+`NEXT_PUBLIC_UI_PREVIEW=true`. **UI preview mode** skips sign-in and uses the in-memory mock
+in `apps/web/lib/dev-preview/`, with a visible "preview" banner on every screen. The login and
+registration forms always call the real API, even in preview mode. The mock does not
+validate card combinations (Phase 4), and its bots only play single cards.
 
 PWA behaviour:
 
@@ -184,6 +204,59 @@ Each dependency check returns `{ status: "up" | "down", latencyMs }` and times o
 Failure details are logged server-side only. The full REST and WebSocket contracts are
 documented here as each phase implements them.
 
+### Authentication and sessions (Phase 3)
+
+- **Server-managed sessions.** Sign-in sets the `tl_session` cookie: 32 random bytes,
+  `HttpOnly`, `SameSite=Lax`, `Secure` in production. The `sessions` table stores only the
+  SHA-256 hash. Every request is checked against the database, so logout, password reset and
+  suspension take effect immediately. Sessions slide: `SESSION_TTL_DAYS` of inactivity, and
+  at most 3× that in total. There is no refresh token, and the web app never sees or stores
+  the token.
+- **Deny by default.** Every route requires a session unless it is marked `@Public()`.
+  `@Roles('ADMIN')` is enforced on the server.
+- **CSRF.** Besides `SameSite=Lax`, state-changing requests that carry an `Origin` header must
+  come from `WEB_ORIGIN`, and `Sec-Fetch-Site: cross-site` is rejected.
+- **Passwords.** Argon2id (19 MiB, t=2, p=1). Unknown emails still run a hash, so response time
+  does not reveal which accounts exist.
+- **Rate limits** (fixed windows, in Redis; in-process memory if Redis is down):
+  login 20/15 min per IP and 10/15 min per email; registration 10/h per IP; forgot-password
+  10/h per IP and 3/h per email (the email limit is silent); token links 30/h per IP; resending
+  verification 3/h per user. Exceeding a limit returns `429 RATE_LIMITED` with `Retry-After`.
+- **Email tokens.** Verification links last 24 h; reset links last 30 min. Both are
+  single-use, and only the latest link works. A password reset signs out every device and also
+  counts as email verification.
+- **Web app.** `proxy.ts` sends visitors without a session cookie to
+  `/login?next=…`. `app/(game)/layout.tsx` then verifies the session with `GET /auth/me`.
+  Rooms, matches, rewards, leaderboard and notifications return `FEATURE_UNAVAILABLE`
+  ("Sắp ra mắt") until Phases 5–7.
+- **Google OAuth** (optional in the specification) is **not implemented yet**.
+
+| Method | Path                          | Auth    | Success                                   | Errors                                                           |
+| ------ | ----------------------------- | ------- | ----------------------------------------- | ---------------------------------------------------------------- |
+| POST   | `/auth/register`              | none    | `201 { user }` + cookie                   | `400 VALIDATION_ERROR`, `409 EMAIL_ALREADY_EXISTS`, 429          |
+| POST   | `/auth/login`                 | none    | `200 { user }` + cookie                   | `401 INVALID_CREDENTIALS`, `403 ACCOUNT_SUSPENDED`, 429          |
+| POST   | `/auth/logout`                | none    | `204` (clears the cookie)                 | —                                                                |
+| POST   | `/auth/logout-all`            | session | `204` (revokes every session)             | 401                                                              |
+| GET    | `/auth/me`                    | session | `200 { user }`                            | `401 UNAUTHENTICATED`/`SESSION_EXPIRED`, `403 ACCOUNT_SUSPENDED` |
+| POST   | `/auth/forgot-password`       | none    | `202 { message }` (always)                | 400, 429                                                         |
+| POST   | `/auth/reset-password`        | none    | `200 { message }`                         | `400 INVALID_TOKEN`, 429                                         |
+| POST   | `/auth/verify-email`          | none    | `200 { message }`                         | `400 INVALID_TOKEN`, 429                                         |
+| POST   | `/auth/resend-verification`   | session | `202 { message }`                         | 401, 429                                                         |
+| GET    | `/users/me`                   | session | `200 CurrentUserSummary`                  | 401                                                              |
+| PATCH  | `/users/me`                   | session | `200 CurrentUserSummary`                  | 400, 401                                                         |
+| GET    | `/users/me/stats`             | session | `200 UserStats`                           | 401                                                              |
+| PUT    | `/users/me/avatar`            | session | `200 CurrentUserSummary`                  | `400` (not PNG/JPEG/WebP), `413` (> 2 MB), 401                   |
+| DELETE | `/users/me/avatar`            | session | `200 CurrentUserSummary`                  | 401                                                              |
+| GET    | `/avatars/:file`              | none    | `200 image/webp` (immutable)              | 404                                                              |
+| PATCH  | `/admin/users/:userId/status` | ADMIN   | `200 { userId, status, revokedSessions }` | `403 FORBIDDEN`, 404, 400                                        |
+
+Paths are relative to `/api/v1`. `{ user }` is `AuthUser` (`id, email, displayName, role,
+emailVerified`); schemas live in `@tienlen/shared`. Avatar uploads are multipart
+(`avatar` field). The server decodes each one and re-encodes it as a 256×256 WebP, so only
+real images survive. Suspending a user requires a reason, revokes their sessions, and is
+written to `admin_audit_logs`. Admins cannot suspend themselves. The first admin is created
+from the command line: `pnpm db:set-role <email> ADMIN`.
+
 ## Data model
 
 [`apps/server/prisma/schema.prisma`](apps/server/prisma/schema.prisma) defines all entities:
@@ -209,8 +282,13 @@ Integrity is enforced in the database, not only in application code:
   `degraded`. The Redis code path is covered by the stubbed e2e tests only.
 - Docker files were written but not executed on the verification machine, which has no Docker.
   CI runs against real PostgreSQL and Redis service containers.
-- Signed-in screens work only in UI preview mode until Phases 3 (auth) and 5 (rooms) land.
-  Wallet, history, leaderboard and notification pages are placeholders for Phases 6–7.
+- With a real account, the lobby shows "Sắp ra mắt" for rooms, quick play, rewards,
+  leaderboard and notifications until Phases 5–7. Wallet and history pages are placeholders.
+- Google OAuth is not implemented (optional in the specification).
+- Rate limiting falls back to per-process memory when Redis is unreachable. With several API
+  instances and no Redis, the effective limits are multiplied by the number of instances.
+- Avatars are stored on local disk (`UPLOAD_DIR`). Several API instances need shared storage
+  (for example a mounted volume) or an object-storage adapter.
 - Installability and offline behaviour are tested automatically in Chromium only, the one
   browser installed on the verification machine. iOS Safari and Firefox were not tested.
 - On Windows, stop `pnpm db:embedded` with Ctrl+C. If the process is killed instead, stop the

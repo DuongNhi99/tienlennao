@@ -9,7 +9,7 @@ import { useForm, useWatch } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { FormError, PasswordField, SelectField, TextField } from '@/components/ui/form-fields';
 import { Modal } from '@/components/ui/modal';
-import { ErrorState, LoadingSkeleton } from '@/components/ui/states';
+import { QueryErrorState, LoadingSkeleton } from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { errorMessage } from '@/lib/api/client';
@@ -140,7 +140,7 @@ export function CreateRoomModal({ open, onClose }: { open: boolean; onClose: () 
       {options.isPending ? (
         <LoadingSkeleton className="h-72" />
       ) : options.isError ? (
-        <ErrorState message={errorMessage(options.error)} onRetry={() => void options.refetch()} />
+        <QueryErrorState error={options.error} onRetry={() => void options.refetch()} />
       ) : (
         <CreateRoomForm options={options.data} onCancel={onClose} />
       )}

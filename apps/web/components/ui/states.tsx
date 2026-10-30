@@ -1,5 +1,6 @@
-import { CircleAlert, type LucideIcon, RefreshCw } from 'lucide-react';
+import { CircleAlert, Hourglass, type LucideIcon, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { ApiClientError, errorMessage } from '@/lib/api/client';
 import { cn } from '@/lib/cn';
 import { Button } from './button';
 
@@ -76,4 +77,30 @@ export function ErrorState({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Error state for a failed query. Features the backend does not offer yet
+ * (FEATURE_UNAVAILABLE) show a "coming soon" panel without a pointless retry button.
+ */
+export function QueryErrorState({
+  error,
+  onRetry,
+  className,
+}: {
+  error: unknown;
+  onRetry?: () => void;
+  className?: string;
+}) {
+  if (error instanceof ApiClientError && error.code === 'FEATURE_UNAVAILABLE') {
+    return (
+      <EmptyState
+        icon={Hourglass}
+        title="Sắp ra mắt"
+        description={error.message}
+        className={className}
+      />
+    );
+  }
+  return <ErrorState message={errorMessage(error)} onRetry={onRetry} className={className} />;
 }

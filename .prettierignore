@@ -1,6 +1,7 @@
 pnpm-lock.yaml
 node_modules
 dist
+dist-e2e
 coverage
 .next
 .local

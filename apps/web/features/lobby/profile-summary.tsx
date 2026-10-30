@@ -3,10 +3,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { winRatePercent } from '@tienlen/shared';
 import { UserAvatar } from '@/components/player/user-avatar';
-import { ErrorState, LoadingRegion, LoadingSkeleton } from '@/components/ui/states';
+import { QueryErrorState, LoadingRegion, LoadingSkeleton } from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
-import { errorMessage } from '@/lib/api/client';
 import { formatCoins, formatPercent } from '@/lib/format';
 
 export function ProfileSummary() {
@@ -24,7 +23,7 @@ export function ProfileSummary() {
     );
   }
   if (user.isError) {
-    return <ErrorState message={errorMessage(user.error)} onRetry={() => void user.refetch()} />;
+    return <QueryErrorState error={user.error} onRetry={() => void user.refetch()} />;
   }
 
   const { displayName, id, avatarUrl, balance, matchesPlayed, matchesWon } = user.data;

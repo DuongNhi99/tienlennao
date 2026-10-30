@@ -38,6 +38,22 @@ describe('validateEnv', () => {
     expect(message).not.toContain('hunter2');
   });
 
+  it('applies account defaults and validates mail and proxy settings', () => {
+    expect(validateEnv(base)).toMatchObject({
+      SESSION_TTL_DAYS: 30,
+      INITIAL_COIN_BONUS: 10_000,
+      TRUST_PROXY: 0,
+      MAIL_OUTBOX_DIR: '.local/mail',
+      UPLOAD_DIR: '.local/uploads',
+    });
+    expect(validateEnv({ ...base, WEB_APP_URL: 'https://tienlen.example/' }).WEB_APP_URL).toBe(
+      'https://tienlen.example',
+    );
+    expect(() => validateEnv({ ...base, SMTP_URL: 'http://mail' })).toThrow(/SMTP_URL/);
+    expect(() => validateEnv({ ...base, TRUST_PROXY: '-1' })).toThrow(/TRUST_PROXY/);
+    expect(() => validateEnv({ ...base, SESSION_TTL_DAYS: '0' })).toThrow(/SESSION_TTL_DAYS/);
+  });
+
   it('rejects invalid origins and ports', () => {
     expect(() => validateEnv({ ...base, WEB_ORIGIN: 'not a url' })).toThrow(/WEB_ORIGIN/);
     expect(() => validateEnv({ ...base, WEB_ORIGIN: 'localhost:3000' })).toThrow(/WEB_ORIGIN/);

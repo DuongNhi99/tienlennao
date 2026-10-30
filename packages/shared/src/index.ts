@@ -7,6 +7,7 @@ export * from './contracts/game';
 export * from './contracts/health';
 export * from './contracts/lobby';
 export * from './game/cards';
+export * from './schemas/admin';
 export * from './schemas/auth';
 export * from './schemas/rooms';
 export * from './stats';

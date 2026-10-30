@@ -4,7 +4,7 @@ import {
   type ErrorCode,
   type ErrorDetail,
 } from '@tienlen/shared';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { publicEnv } from '../env';
 
 export class ApiClientError extends Error {
@@ -36,6 +36,8 @@ export async function apiRequest<TSchema extends z.ZodType>(
   path: string,
   { method = 'GET', body, schema, signal }: RequestOptions<TSchema>,
 ): Promise<z.output<TSchema>> {
+  // FormData (file uploads) sets its own multipart content type; everything else is JSON.
+  const isForm = body instanceof FormData;
   let response: Response;
   try {
     response = await fetch(`${publicEnv.NEXT_PUBLIC_API_URL}${path}`, {
@@ -43,9 +45,9 @@ export async function apiRequest<TSchema extends z.ZodType>(
       credentials: 'include',
       headers: {
         accept: 'application/json',
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(body === undefined || isForm ? {} : { 'content-type': 'application/json' }),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
       signal,
     });
   } catch (error) {
@@ -71,6 +73,9 @@ export async function apiRequest<TSchema extends z.ZodType>(
   }
   return parsed.data;
 }
+
+/** Schema for 204 No Content responses (an empty body parses as null). */
+export const noContentSchema = z.null();
 
 /** User-facing message for any thrown value. */
 export function errorMessage(error: unknown): string {

@@ -5,15 +5,14 @@ import { createContext, type ReactNode, useContext, useEffect, useState } from '
 import { ApiClientError } from '@/lib/api/client';
 import { isUiPreviewEnabled } from '@/lib/dev-preview/flag';
 import { createPreviewDataSource } from '@/lib/dev-preview/preview-data-source';
+import { createApiDataSource } from './api-data-source';
 import { queryKeys } from './query-keys';
 import type { DataSourceEvent, GameDataSource } from './types';
 
 const DataSourceContext = createContext<GameDataSource | null>(null);
 
 function createDataSource(): GameDataSource {
-  if (isUiPreviewEnabled()) return createPreviewDataSource();
-  // The API/Socket.IO implementation replaces this in Phases 3 and 5.
-  throw new Error('No backend data source is available yet; enable UI preview mode.');
+  return isUiPreviewEnabled() ? createPreviewDataSource() : createApiDataSource();
 }
 
 function createQueryClient(): QueryClient {
@@ -21,10 +20,11 @@ function createQueryClient(): QueryClient {
     defaultOptions: {
       queries: {
         staleTime: 10_000,
-        // Retry only transient failures; domain errors (4xx) are final.
+        // Retry only transient failures; domain errors (4xx) and missing features are final.
         retry: (failureCount, error) =>
           failureCount < 2 &&
-          (!(error instanceof ApiClientError) || error.status === 0 || error.status >= 500),
+          (!(error instanceof ApiClientError) ||
+            (error.code !== 'FEATURE_UNAVAILABLE' && (error.status === 0 || error.status >= 500))),
         refetchOnWindowFocus: true,
       },
       // Mutations change server state; never retry them automatically.

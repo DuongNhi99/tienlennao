@@ -45,6 +45,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
         'Unhandled error',
       );
     }
+    if (exception instanceof AppException && exception.headers) {
+      response.set(exception.headers);
+    }
     response.status(status).json(body);
   }
 }

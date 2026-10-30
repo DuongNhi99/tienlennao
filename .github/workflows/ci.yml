@@ -51,5 +51,7 @@ jobs:
       - run: pnpm test
       - name: Apply migrations to a clean database
         run: pnpm --filter @tienlen/server exec prisma migrate deploy
+      - name: Integration tests (API + PostgreSQL + Redis, database tienlen_test)
+        run: pnpm test:integration
       - run: pnpm db:seed
       - run: pnpm build

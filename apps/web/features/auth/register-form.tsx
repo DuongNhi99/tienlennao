@@ -8,16 +8,15 @@ import {
   registerFormSchema,
 } from '@tienlen/shared';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { CheckboxField, FormError, PasswordField, TextField } from '@/components/ui/form-fields';
 import { ApiClientError, errorMessage } from '@/lib/api/client';
+import { navigateAfterSessionChange } from '@/lib/session-navigation';
 import { register as registerAccount } from './auth-api';
 
 export function RegisterForm() {
-  const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const {
     register,
@@ -41,8 +40,7 @@ export function RegisterForm() {
     try {
       // The client never sends a balance or role; the server initializes both.
       await registerAccount(values);
-      router.replace('/lobby');
-      router.refresh();
+      navigateAfterSessionChange('/lobby');
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'EMAIL_ALREADY_EXISTS') {
         setError('email', { message: error.message }, { shouldFocus: true });

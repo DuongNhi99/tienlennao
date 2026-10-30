@@ -8,6 +8,8 @@ export class AppException extends HttpException {
     status: HttpStatus,
     readonly details?: ErrorDetail[],
     message: string = ERROR_MESSAGES_VI[code],
+    /** Extra response headers, e.g. Retry-After for RATE_LIMITED. */
+    readonly headers?: Readonly<Record<string, string>>,
   ) {
     super(message, status);
   }

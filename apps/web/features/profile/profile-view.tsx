@@ -4,11 +4,16 @@ import { useQuery } from '@tanstack/react-query';
 import { winRatePercent } from '@tienlen/shared';
 import { Settings } from 'lucide-react';
 import { UserAvatar } from '@/components/player/user-avatar';
-import { EmptyState, ErrorState, LoadingRegion, LoadingSkeleton } from '@/components/ui/states';
+import {
+  EmptyState,
+  QueryErrorState,
+  LoadingRegion,
+  LoadingSkeleton,
+} from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
-import { errorMessage } from '@/lib/api/client';
 import { formatCoins, formatDate, formatPercent, shortId } from '@/lib/format';
+import { ProfileSettings } from './profile-settings';
 
 export function ProfileView() {
   const source = useDataSource();
@@ -25,7 +30,7 @@ export function ProfileView() {
     );
   }
   if (user.isError)
-    return <ErrorState message={errorMessage(user.error)} onRetry={() => void user.refetch()} />;
+    return <QueryErrorState error={user.error} onRetry={() => void user.refetch()} />;
 
   const u = user.data;
   const losses = u.matchesPlayed - u.matchesWon;
@@ -68,11 +73,15 @@ export function ProfileView() {
           Chỉ tính các ván đã kết thúc hợp lệ. Tỉ lệ thắng = số ván về nhất / tổng số ván.
         </p>
       </section>
-      <EmptyState
-        icon={Settings}
-        title="Cài đặt hồ sơ"
-        description="Đổi tên hiển thị và ảnh đại diện sẽ có khi đăng nhập thật được triển khai (giai đoạn 3)."
-      />
+      {source.kind === 'api' ? (
+        <ProfileSettings user={u} />
+      ) : (
+        <EmptyState
+          icon={Settings}
+          title="Cài đặt hồ sơ"
+          description="Không khả dụng ở chế độ xem trước giao diện: cần đăng nhập bằng tài khoản thật."
+        />
+      )}
     </div>
   );
 }

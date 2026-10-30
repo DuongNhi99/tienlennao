@@ -9,7 +9,7 @@ import tseslint from 'typescript-eslint';
 /** @param {string} tsconfigRootDir */
 export function createNodeConfig(tsconfigRootDir) {
   return defineConfig(
-    { ignores: ['dist/**', 'coverage/**', 'node_modules/**'] },
+    { ignores: ['dist/**', 'dist-e2e/**', 'coverage/**', 'node_modules/**'] },
     js.configs.recommended,
     tseslint.configs.recommendedTypeChecked,
     {
