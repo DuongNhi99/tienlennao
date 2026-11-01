@@ -13,6 +13,7 @@ import {
   applyTimeout,
   assertTransition,
   calculateMatchResult,
+  calculatePayouts,
   canPass,
   type EngineEvent,
   type ErrorCode,
@@ -33,6 +34,8 @@ import { lockMatch, lockRoom } from '../common/prisma/prisma-helpers';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { playerSelect, RoomsService } from '../rooms/rooms.service';
+import { LedgerService } from '../wallet/ledger.service';
+import { RewardsService } from '../wallet/rewards.service';
 import { Dealer } from './dealer';
 import { RulePresetsService } from './rule-presets.service';
 
@@ -103,6 +106,8 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     private readonly rooms: RoomsService,
     private readonly realtime: RealtimeService,
     private readonly dealer: Dealer,
+    private readonly ledger: LedgerService,
+    private readonly rewards: RewardsService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -186,6 +191,18 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
         include: { players: true },
       });
       await tx.room.update({ where: { id: roomId }, data: { status: 'IN_PROGRESS' } });
+      // Entry fees are charged now, for everyone or (on INSUFFICIENT_COINS) for no one.
+      if (room.entryFee > 0) {
+        for (const { userId } of match.players) {
+          await this.ledger.post(tx, {
+            userId,
+            type: 'MATCH_ENTRY',
+            amount: -room.entryFee,
+            idempotencyKey: `match-entry:${match.id}`,
+            matchId: match.id,
+          });
+        }
+      }
       await this.writeEvents(tx, match.id, 1, events, null, null);
       if (state.status === 'FINISHED') await this.finalize(tx, match.id, roomId, state);
 
@@ -429,9 +446,10 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   /**
-   * PLAYING → RESOLVING → FINISHED: stores placements and statistics, closes the room and
-   * frees its seats. Rooms are free in this phase, so coinDelta is 0; Phase 6 settles paid
-   * matches through the ledger here.
+   * PLAYING → RESOLVING → FINISHED, and settlement (docs/ECONOMY.md): placements, payouts,
+   * coinDelta, statistics, achievements and `settledAt` are written in the transaction that
+   * ended play, under the match lock, so a match is settled exactly once. The room closes and
+   * its seats are freed.
    */
   private async finalize(
     tx: Prisma.TransactionClient,
@@ -442,25 +460,43 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     assertTransition(MATCH_TRANSITIONS, 'PLAYING', 'RESOLVING');
     assertTransition(MATCH_TRANSITIONS, 'RESOLVING', 'FINISHED');
     assertTransition(ROOM_TRANSITIONS, 'IN_PROGRESS', 'FINISHED');
+    const match = await tx.match.findUniqueOrThrow({
+      where: { id: matchId },
+      select: { entryFee: true, settledAt: true },
+    });
+    if (match.settledAt) throw new Error(`Match ${matchId} is already settled`);
     const outcome = calculateMatchResult(state);
+    const payouts = calculatePayouts(match.entryFee);
     const now = new Date();
 
     const players = await tx.matchPlayer.findMany({ where: { matchId } });
     const userAt = (seat: number) => players.find((p) => p.seatIndex === seat)!.userId;
     for (const placement of outcome.placements) {
+      const userId = userAt(placement.seat);
+      const payout = payouts[placement.placement - 1]!;
+      if (payout > 0) {
+        await this.ledger.post(tx, {
+          userId,
+          type: 'MATCH_REWARD',
+          amount: payout,
+          idempotencyKey: `match-reward:${matchId}`,
+          matchId,
+          metadata: { placement: placement.placement },
+        });
+      }
       await tx.matchPlayer.update({
         where: { matchId_seatIndex: { matchId, seatIndex: placement.seat } },
         data: {
           status: 'FINISHED',
           placement: placement.placement,
           cardsRemaining: placement.remainingCards.length,
-          coinDelta: 0,
+          coinDelta: payout - match.entryFee,
         },
       });
     }
     await tx.match.update({
       where: { id: matchId },
-      data: { status: 'FINISHED', finishedAt: now },
+      data: { status: 'FINISHED', finishedAt: now, settledAt: now },
     });
     await tx.userProfile.updateMany({
       where: { userId: { in: players.map((p) => p.userId) } },
@@ -470,8 +506,67 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       where: { userId: userAt(outcome.winnerSeat) },
       data: { matchesWon: { increment: 1 } },
     });
+    for (const { userId } of players) await this.rewards.unlockAchievements(tx, userId);
     await tx.roomPlayer.deleteMany({ where: { roomId } });
     await tx.room.update({ where: { id: roomId }, data: { status: 'FINISHED', closedAt: now } });
+  }
+
+  /**
+   * Ends a match without a result (docs/ECONOMY.md, "Cancellation and refunds"): every entry
+   * fee is refunded once, no rewards are paid, the room is cancelled and its seats freed. Used
+   * by administrators (Phase 7) and for unrecoverable errors.
+   */
+  async abort(matchId: string, reason: string): Promise<void> {
+    const committed = await this.prisma.$transaction(async (tx) => {
+      if (!(await lockMatch(tx, matchId))) {
+        throw new AppException('NOT_FOUND', HttpStatus.NOT_FOUND);
+      }
+      const match = await tx.match.findUniqueOrThrow({
+        where: { id: matchId },
+        include: { players: true, room: true },
+      });
+      if (match.status === 'ABORTED') return null;
+      if (match.status === 'FINISHED') {
+        throw new AppException('MATCH_FINISHED', HttpStatus.CONFLICT);
+      }
+      assertTransition(MATCH_TRANSITIONS, match.status, 'ABORTED');
+      if (match.entryFee > 0) {
+        for (const { userId } of match.players) {
+          const charged = await tx.walletTransaction.findUnique({
+            where: { userId_idempotencyKey: { userId, idempotencyKey: `match-entry:${matchId}` } },
+          });
+          if (!charged) continue;
+          await this.ledger.post(tx, {
+            userId,
+            type: 'MATCH_REFUND',
+            amount: -charged.amount,
+            idempotencyKey: `match-refund:${matchId}`,
+            matchId,
+          });
+        }
+      }
+      await tx.match.update({
+        where: { id: matchId },
+        data: { status: 'ABORTED', abortReason: reason, finishedAt: new Date() },
+      });
+      if (match.room.status === 'IN_PROGRESS') {
+        assertTransition(ROOM_TRANSITIONS, 'IN_PROGRESS', 'CANCELLED');
+        await tx.roomPlayer.deleteMany({ where: { roomId: match.roomId } });
+        await tx.room.update({
+          where: { id: match.roomId },
+          data: { status: 'CANCELLED', closedAt: new Date() },
+        });
+      }
+      return {
+        matchId,
+        roomId: match.roomId,
+        stateVersion: match.stateVersion,
+        playerIds: match.players.map((p) => p.userId),
+        finished: true,
+        deadline: null,
+      } satisfies Committed;
+    });
+    if (committed) this.afterCommit(committed, true);
   }
 
   private afterCommit(committed: Committed, roomChanged: boolean): void {
@@ -487,7 +582,8 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       this.realtime.roomUpdated(roomId, playerIds);
       this.realtime.roomsChanged();
     }
-    if (finished) this.realtime.userUpdated(playerIds);
+    // Balances changed: fees at the start of a paid match, payouts and statistics at the end.
+    if (finished || roomChanged) this.realtime.userUpdated(playerIds);
   }
 
   private schedule(matchId: string, version: number, deadline: Date): void {

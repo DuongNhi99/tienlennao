@@ -1,14 +1,8 @@
 import type { Metadata } from 'next';
-import { ComingSoon } from '@/components/ui/coming-soon';
+import { WalletView } from '@/features/wallet/wallet-view';
 
 export const metadata: Metadata = { title: 'Ví xu' };
 
-export default function Page() {
-  return (
-    <ComingSoon
-      title="Ví xu"
-      phase={6}
-      description="Số dư, lịch sử giao dịch và phần thưởng xu ảo"
-    />
-  );
+export default function WalletPage() {
+  return <WalletView />;
 }

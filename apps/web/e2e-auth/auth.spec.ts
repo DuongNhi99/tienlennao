@@ -129,6 +129,9 @@ test('an expired session sends the user to login with an explanation', async ({
   await login(page, newPassword);
   await expect(page).toHaveURL(/\/lobby$/);
   // Simulate a session revoked elsewhere (e.g. "sign out everywhere" on another device).
+  // Leave the lobby first: its own API calls would otherwise see the revoked token and clear
+  // the cookie before /profile is opened.
+  await page.goto('about:blank');
   const cookies = await context.cookies();
   await context.clearCookies();
   await context.addCookies(

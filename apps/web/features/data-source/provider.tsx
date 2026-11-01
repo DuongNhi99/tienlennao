@@ -40,7 +40,10 @@ function EventBridge({ source }: { source: GameDataSource }) {
       source.subscribe((event: DataSourceEvent) => {
         switch (event.type) {
           case 'user':
+            // Balance changes (fees, payouts, rewards) also change the wallet.
             void queryClient.invalidateQueries({ queryKey: queryKeys.currentUser });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.wallet });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.walletTransactions });
             break;
           case 'rooms':
             void queryClient.invalidateQueries({ queryKey: queryKeys.rooms() });

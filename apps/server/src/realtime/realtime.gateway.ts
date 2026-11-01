@@ -40,6 +40,7 @@ export function readSessionToken(header: string | undefined): string | undefined
 @WebSocketGateway()
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
+  private readonly writes = new Map<string, Promise<void>>();
 
   constructor(
     private readonly sessions: SessionsService,
@@ -68,20 +69,32 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   async handleConnection(socket: Socket): Promise<void> {
     const { userId } = socket.data as SocketData;
+    // Counted before any await, so a disconnect that arrives meanwhile is counted after it.
+    const first = this.presence.connect(userId);
     await socket.join(userChannel(userId));
-    if (this.presence.connect(userId)) await this.updateConnection(userId, true);
+    if (first) await this.recordConnection(userId);
   }
 
   async handleDisconnect(socket: Socket): Promise<void> {
     const { userId } = socket.data as Partial<SocketData>;
-    if (userId && this.presence.disconnect(userId)) await this.updateConnection(userId, false);
+    if (userId && this.presence.disconnect(userId)) await this.recordConnection(userId);
   }
 
-  private async updateConnection(userId: string, connected: boolean): Promise<void> {
-    try {
-      await this.rooms.setConnected(userId, connected);
-    } catch (error) {
-      this.logger.warn(`Could not record connection change: ${describeError(error)}`);
-    }
+  /**
+   * Writes the user's presence to their seat. Writes for one user run one after another and
+   * each records the presence at the time it runs, so the last write always matches reality,
+   * however quickly connections open and close.
+   */
+  private recordConnection(userId: string): Promise<void> {
+    const run = (this.writes.get(userId) ?? Promise.resolve())
+      .then(() => this.rooms.setConnected(userId, this.presence.isOnline(userId)))
+      .catch((error: unknown) =>
+        this.logger.warn(`Could not record connection change: ${describeError(error)}`),
+      );
+    this.writes.set(userId, run);
+    void run.then(() => {
+      if (this.writes.get(userId) === run) this.writes.delete(userId);
+    });
+    return run;
   }
 }

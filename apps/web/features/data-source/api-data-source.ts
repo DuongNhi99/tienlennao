@@ -1,6 +1,8 @@
 import {
   type ClientToServerEvents,
   currentUserSummarySchema,
+  dailyRewardClaimSchema,
+  dailyRewardStatusSchema,
   ERROR_MESSAGES_VI,
   matchmakingStatusSchema,
   matchResultSchema,
@@ -10,6 +12,8 @@ import {
   roomSummarySchema,
   type ServerToClientEvents,
   SOCKET_IO_PATH,
+  walletSummarySchema,
+  walletTransactionPageSchema,
 } from '@tienlen/shared';
 import { io, type Socket } from 'socket.io-client';
 import { z } from 'zod';
@@ -18,8 +22,7 @@ import { publicEnv } from '@/lib/env';
 import type { DataSourceEvent, GameDataSource } from './types';
 
 /**
- * The real backend. Rooms, quick match and matches are served by the API (Phase 5); wallet
- * rewards (Phase 6), and leaderboard and notifications (Phase 7) are not yet: those methods
+ * The real backend. Leaderboard and notifications (Phase 7) are not served yet: those methods
  * reject with FEATURE_UNAVAILABLE so screens say "coming soon" instead of inventing data.
  */
 function unavailable(): Promise<never> {
@@ -149,8 +152,14 @@ export function createApiDataSource(): GameDataSource {
       apiRequest('/matchmaking', { method: 'DELETE', schema: matchmakingStatusSchema }),
 
     getLeaderboardPreview: unavailable,
-    getDailyReward: unavailable,
-    claimDailyReward: unavailable,
+    getWallet: () => apiRequest('/wallet', { schema: walletSummarySchema }),
+    listWalletTransactions: (cursor) =>
+      apiRequest(`/wallet/transactions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {
+        schema: walletTransactionPageSchema,
+      }),
+    getDailyReward: () => apiRequest('/rewards/daily', { schema: dailyRewardStatusSchema }),
+    claimDailyReward: () =>
+      apiRequest('/rewards/daily/claim', { method: 'POST', schema: dailyRewardClaimSchema }),
     listNotifications: unavailable,
     markAllNotificationsRead: unavailable,
   };

@@ -2,15 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import {
   apiErrorSchema,
-  canBeatCombination,
   type CardId,
-  classifyCombination,
-  createDeck,
-  createSeededRandom,
-  dealCards,
   DEFAULT_GAME_RULES,
   detectInstantWin,
-  listCombinations,
   type MatchState,
   matchResultSchema,
   matchmakingStatusSchema,
@@ -19,7 +13,6 @@ import {
   roomDetailSchema,
   roomOptionsSchema,
   roomSummarySchema,
-  shuffleDeck,
   SOCKET_IO_PATH,
 } from '@tienlen/shared';
 import { io, type Socket } from 'socket.io-client';
@@ -28,26 +21,7 @@ import { Dealer } from '../../src/game/dealer';
 import { GameService } from '../../src/game/game.service';
 import { RoomsService } from '../../src/rooms/rooms.service';
 import { createTestApp, registerUser, type TestContext } from './helpers';
-
-/**
- * Known deals: planned ones first, otherwise seeded deals without an instant win, so that
- * every match below is actually played.
- */
-class TestDealer {
-  readonly planned: CardId[][][] = [];
-  private readonly random = createSeededRandom(2026);
-
-  deal(): CardId[][] {
-    const planned = this.planned.shift();
-    if (planned) return planned;
-    for (;;) {
-      const hands = dealCards(shuffleDeck(createDeck(), this.random));
-      if (hands.every((hand) => !detectInstantWin(hand, DEFAULT_GAME_RULES.instantWins))) {
-        return hands;
-      }
-    }
-  }
-}
+import { choosePlay, TestDealer } from './play-helpers';
 
 const dealer = new TestDealer();
 let ctx: TestContext;
@@ -112,19 +86,6 @@ async function storedState(roomId: string): Promise<MatchState> {
   return (match.stateSnapshot as unknown as { engine: MatchState }).engine;
 }
 
-/** A simple legal strategy computed only from the player's own view. */
-function choosePlay(v: PlayerGameView): CardId[] | null {
-  const rules = DEFAULT_GAME_RULES;
-  const target = v.currentTrick && classifyCombination(v.currentTrick.cards, rules);
-  const options = listCombinations(v.myHand, rules).filter(
-    (c) =>
-      // The very first play of the match must contain 3♠.
-      (v.stateVersion > 0 || !v.myHand.includes('3S') || c.cards.includes('3S')) &&
-      (!target || canBeatCombination(c, target, rules)),
-  );
-  return options[0]?.cards ?? null;
-}
-
 function connect(player: Player | null, origin?: string): Promise<Socket> {
   const socket = io(baseUrl, {
     path: SOCKET_IO_PATH,
@@ -153,15 +114,16 @@ async function eventually(check: () => boolean | Promise<boolean>, what: string)
 }
 
 describe('rooms', () => {
-  it('offers only free rooms until coin settlement exists (Phase 6)', async () => {
+  it('accepts only the entry fees and timers the active preset offers', async () => {
     const [host] = await players(1);
     const options = roomOptionsSchema.parse(
       (await host!.http.get(`${API}/rooms/options`).expect(200)).body,
     );
-    expect(options.entryFees).toEqual([0]);
+    expect(options.entryFees).toContain(0);
+    expect(options.entryFees).not.toContain(123);
     const res = await host!.http
       .post(`${API}/rooms`)
-      .send({ visibility: 'PUBLIC', entryFee: 100, turnTimerSeconds: 30, requestId: randomUUID() })
+      .send({ visibility: 'PUBLIC', entryFee: 123, turnTimerSeconds: 30, requestId: randomUUID() })
       .expect(400);
     expect(errorCode(res.body)).toBe('VALIDATION_ERROR');
   });
@@ -588,14 +550,14 @@ describe('quick match', () => {
     expect((await detail(table[0]!, roomId)).status).toBe('IN_PROGRESS');
   });
 
-  it('cancels a search, and rejects paid queues for now', async () => {
+  it('cancels a search, and rejects fees the preset does not offer', async () => {
     const [p] = await players(1);
     await p!.http.post(`${API}/matchmaking`).send({ entryFee: 0 }).expect(201);
     const cancelled = matchmakingStatusSchema.parse(
       (await p!.http.delete(`${API}/matchmaking`).expect(200)).body,
     );
     expect(cancelled.state).toBe('IDLE');
-    const paid = await p!.http.post(`${API}/matchmaking`).send({ entryFee: 100 }).expect(400);
+    const paid = await p!.http.post(`${API}/matchmaking`).send({ entryFee: 123 }).expect(400);
     expect(errorCode(paid.body)).toBe('VALIDATION_ERROR');
   });
 

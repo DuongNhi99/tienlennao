@@ -7,8 +7,8 @@ responsive, installable **Next.js PWA** with a **NestJS** backend.
 > or real-world prize redemption. Adding any of these requires a separate legal, compliance,
 > and security review first.
 
-**Status:** Phases 1–5 (foundation, UI and PWA, accounts, game engine, multiplayer) are
-complete. See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
+**Status:** Phases 1–6 (foundation, UI and PWA, accounts, game engine, multiplayer, wallet
+and rewards) are complete. See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
 
 ---
 
@@ -352,13 +352,33 @@ How the server keeps play authoritative:
 - **Lifecycle.** The host starts a READY room (four ready players); quick match starts its own
   room. Rooms that never start expire after `ROOM_IDLE_MINUTES`. When a match finishes, the
   placements and statistics are stored, the room becomes FINISHED and its seats are freed.
-- **Free rooms only, for now.** Entry fees are charged and paid out in Phase 6. Until then the
-  server offers only the free entry fee, so no match promises coins it cannot settle.
+- **Coins.** Entry fees are charged when a match starts and the pool is paid out when it
+  finishes, in the same transactions (see "Wallet and rewards" below).
 
 **Scaling.** Row locks and the database keep actions safe across API instances, but three
 pieces are still per process: quick-match queues, socket presence counts and turn timers.
 Run a single API instance until those move to Redis and Socket.IO uses the Redis adapter
 (Phase 8).
+
+## Wallet and rewards (Phase 6)
+
+The policy is [docs/ECONOMY.md](docs/ECONOMY.md): an append-only ledger with per-user
+idempotency keys, entry fees charged at match start, a 50/30/20/0 % payout of the whole pool,
+settlement exactly once in the transaction that ends the match, full refunds for aborted
+matches, a daily reward on Vietnam days with a 7-day streak, and achievement rewards. Coins
+are virtual points only.
+
+| Method | Path                                | Success                                | Errors                              |
+| ------ | ----------------------------------- | -------------------------------------- | ----------------------------------- |
+| GET    | `/wallet`                           | `{ balance, totalEarned, totalSpent }` | 401                                 |
+| GET    | `/wallet/transactions?cursor&limit` | `{ items, nextCursor }`, newest first  | 400, 401                            |
+| GET    | `/rewards/daily`                    | `DailyRewardStatus`                    | 401                                 |
+| POST   | `/rewards/daily/claim`              | `{ amount, balance }`                  | `409 ACTION_ALREADY_PROCESSED`, 429 |
+
+Balances only change through `LedgerService` (`apps/server/src/wallet`): one conditional
+`UPDATE … WHERE balance + amount >= 0` plus one ledger row, in the caller's transaction, so
+concurrent debits cannot overspend. `WalletService.reconcile` checks a wallet against its
+ledger. The web app shows the balance, totals and history on `/wallet`.
 
 ## Data model
 
@@ -385,9 +405,10 @@ Integrity is enforced in the database, not only in application code:
   `degraded`. The Redis code path is covered by the stubbed e2e tests only.
 - Docker files were written but not executed on the verification machine, which has no Docker.
   CI runs against real PostgreSQL and Redis service containers.
-- With a real account, the lobby shows "Sắp ra mắt" for rewards, leaderboard and
-  notifications until Phases 6–7. Wallet and history pages are placeholders. Only free rooms
-  are offered until Phase 6.
+- With a real account, the lobby shows "Sắp ra mắt" for the leaderboard and notifications
+  until Phase 7, and the match history page is a placeholder.
+- Aborting a match (with refunds) exists in the server but has no administrator tool until
+  Phase 7. Administrative coin corrections arrive with it.
 - Quick-match queues, presence counts and turn timers live in one API process (see
   "Scaling"). A restart empties the queues; matches resume from the database.
 - Open sockets are not closed when a session is revoked. They carry no private data, and the

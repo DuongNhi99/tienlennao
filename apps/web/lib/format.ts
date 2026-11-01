@@ -5,6 +5,14 @@ const dateFormatter = new Intl.DateTimeFormat('vi-VN', {
   year: 'numeric',
   timeZone: 'Asia/Ho_Chi_Minh',
 });
+const dateTimeFormatter = new Intl.DateTimeFormat('vi-VN', {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'Asia/Ho_Chi_Minh',
+});
 const relativeFormatter = new Intl.RelativeTimeFormat('vi', { numeric: 'auto' });
 
 /** 1250 → "1.250" (Vietnamese grouping). Coins are integers; never formatted as currency. */
@@ -20,6 +28,11 @@ export function formatCoinDelta(amount: number): string {
 
 export function formatDate(iso: string): string {
   return dateFormatter.format(new Date(iso));
+}
+
+/** Date and time in Vietnam time, e.g. for ledger entries. */
+export function formatDateTime(iso: string): string {
+  return dateTimeFormatter.format(new Date(iso));
 }
 
 /** "5 phút trước", "hôm qua" … relative to `now` (passed in to keep rendering pure). */

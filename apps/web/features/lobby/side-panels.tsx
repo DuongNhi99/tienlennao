@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Clock, Gift, Trophy } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -51,6 +51,7 @@ function Panel({
 
 export function DailyRewardPanel() {
   const source = useDataSource();
+  const queryClient = useQueryClient();
   const reward = useQuery({
     queryKey: queryKeys.dailyReward,
     queryFn: () => source.getDailyReward(),
@@ -60,6 +61,10 @@ export function DailyRewardPanel() {
     onSuccess: ({ amount }) => {
       showToast(`Bạn đã nhận ${formatCoins(amount)} xu!`, { variant: 'success' });
       void reward.refetch();
+      // The header balance and the wallet page show the new balance.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.currentUser });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.wallet });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.walletTransactions });
     },
     onError: (error) => showToast(errorMessage(error), { variant: 'error' }),
   });

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
+import { WalletModule } from '../wallet/wallet.module';
 import { MatchmakingController } from '../matchmaking/matchmaking.controller';
 import { MatchmakingService } from '../matchmaking/matchmaking.service';
 import { PresenceService } from '../realtime/presence.service';
@@ -17,7 +19,7 @@ import { RulePresetsService } from './rule-presets.service';
  * Dependencies point one way: controllers → matchmaking → game → rooms → realtime.
  */
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, RateLimitModule, WalletModule],
   controllers: [RoomsController, GameController, MatchmakingController],
   providers: [
     RulePresetsService,

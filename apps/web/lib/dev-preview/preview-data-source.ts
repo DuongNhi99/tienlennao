@@ -41,6 +41,10 @@ import {
   sortCards,
   compareCards,
   type TrickPlay,
+  type WalletTransaction,
+  type WalletTransactionType,
+  walletSummarySchema,
+  walletTransactionPageSchema,
 } from '@tienlen/shared';
 import type { DataSourceEvent, GameAction, GameDataSource } from '@/features/data-source/types';
 import { ApiClientError } from '@/lib/api/client';
@@ -220,6 +224,43 @@ export function createPreviewDataSource(): GameDataSource {
     matchesWon: 15,
   };
   const daily = { claimable: true, streakDay: 3 };
+
+  // Newest first: 10 000 → +200 → +2 100 → −100 → +300 ends at the starting 12 500.
+  const ledger: WalletTransaction[] = (
+    [
+      ['MATCH_REWARD', 300, 12_500, 3],
+      ['MATCH_ENTRY', -100, 12_200, 3.1],
+      ['ACHIEVEMENT_REWARD', 2100, 12_300, 24],
+      ['DAILY_REWARD', 200, 10_200, 26],
+      ['INITIAL_BONUS', 10_000, 10_000, 24 * 30],
+    ] as const
+  ).map(([type, amount, balanceAfter, hoursAgo], i) => ({
+    id: uuid(0xc00 + i),
+    type,
+    amount,
+    balanceAfter,
+    matchId: type.startsWith('MATCH') ? uuid(0xd00) : null,
+    reason: null,
+    createdAt: new Date(now - hoursAgo * 3600_000).toISOString(),
+  }));
+  const totals = { earned: 12_600, spent: 100 };
+
+  /** Mirrors the server ledger: every balance change is one entry. */
+  function record(type: WalletTransactionType, amount: number, matchId: string | null = null) {
+    if (amount === 0) return;
+    user.balance += amount;
+    if (amount > 0) totals.earned += amount;
+    else totals.spent -= amount;
+    ledger.unshift({
+      id: crypto.randomUUID(),
+      type,
+      amount,
+      balanceAfter: user.balance,
+      matchId,
+      reason: null,
+      createdAt: new Date().toISOString(),
+    });
+  }
   const matchmaking: {
     state: MatchmakingStatus['state'];
     entryFee: number | null;
@@ -374,7 +415,7 @@ export function createPreviewDataSource(): GameDataSource {
       result: null,
     };
     if (players.some((p) => p.userId === ME.userId)) {
-      user.balance -= room.entryFee;
+      record('MATCH_ENTRY', -room.entryFee, game.matchId);
       emit({ type: 'user' });
     }
     room.status = 'IN_PROGRESS';
@@ -490,7 +531,7 @@ export function createPreviewDataSource(): GameDataSource {
 
     const mine = placements.find((p) => p.userId === ME.userId);
     if (mine) {
-      user.balance += mine.coinDelta + room.entryFee;
+      record('MATCH_REWARD', mine.coinDelta + room.entryFee, game.matchId);
       user.matchesPlayed++;
       if (mine.placement === 1) user.matchesWon++;
       emit({ type: 'user' });
@@ -808,12 +849,31 @@ export function createPreviewDataSource(): GameDataSource {
       });
     },
 
+    async getWallet() {
+      await delay(LATENCY_MS);
+      return walletSummarySchema.parse({
+        balance: user.balance,
+        totalEarned: totals.earned,
+        totalSpent: totals.spent,
+      });
+    },
+
+    async listWalletTransactions(cursor?: string) {
+      await delay(LATENCY_MS);
+      const start = cursor ? ledger.findIndex((t) => t.id === cursor) + 1 : 0;
+      const items = ledger.slice(start, start + 20);
+      return walletTransactionPageSchema.parse({
+        items,
+        nextCursor: start + 20 < ledger.length ? items.at(-1)!.id : null,
+      });
+    },
+
     async claimDailyReward() {
       await delay(LATENCY_MS);
       if (!daily.claimable) throw new ApiError('ACTION_ALREADY_PROCESSED', 409);
       const amount = daily.streakDay * 100;
       daily.claimable = false;
-      user.balance += amount;
+      record('DAILY_REWARD', amount);
       emit({ type: 'user' });
       return { amount, balance: user.balance };
     },

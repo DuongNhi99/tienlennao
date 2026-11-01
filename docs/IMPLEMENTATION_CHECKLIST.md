@@ -93,28 +93,54 @@ against PostgreSQL. The browser test `apps/web/e2e-auth/multiplayer.spec.ts` pla
 match from the UI against three API clients. Browser suites: real stack 8/8 passed; preview 45 tests, of which 4
 tablet tests timed out under machine load on the first run and passed (14/14) on a rerun.
 
-| Item                                   | Status | Evidence                                                                                          |
-| -------------------------------------- | ------ | ------------------------------------------------------------------------------------------------- |
-| Create, list, join (ID or code), leave | ✅     | Idempotent create per `requestId`; one seat per user; host hand-over; empty room → CANCELLED      |
-| Private rooms                          | ✅     | Argon2 room password; hidden from the list; detail forbidden to outsiders                         |
-| Waiting room: ready, settings, start   | ✅     | WAITING ⇄ READY by shared transitions; host-only settings reset readiness; host-only start        |
-| Quick match                            | ✅     | Per-fee queue; four players → ready public room, match started; cancel; leaves queue on join      |
-| Socket.IO contract                     | ✅     | `contracts/realtime.ts`; cookie-authenticated handshake; foreign origins refused                  |
-| Authoritative actions                  | ✅     | Row lock per match; membership, turn, ownership, combination checked; engine decides legality     |
-| Idempotent action IDs, state versions  | ✅     | Retried `actionId` applied once; stale version → `STALE_STATE`                                    |
-| Player-specific views                  | ✅     | Each view holds only the caller's hand; tests scan every view and notification for card IDs       |
-| Turn deadlines and timeouts            | ✅     | Server-owned deadline in the snapshot; timeout action applied once; timers rebuilt at boot        |
-| Disconnect and reconnect               | ✅     | Connected flag on seats; waiting-room seat freed after the grace period; reconnect resyncs        |
-| Match end                              | ✅     | Placements, statistics, gap-free event log; room FINISHED and seats freed; instant win at start   |
-| Room cleanup                           | ✅     | Idle rooms expire (`ROOM_IDLE_MINUTES`)                                                           |
-| Web client                             | ✅     | Real API data source and socket notifications; selection label and Play disabled for non-combos   |
-| Paid rooms                             | ⏳     | Offered from Phase 6, when entry fees are charged and settled (the server offers only free rooms) |
-| Multi-instance realtime                | ⏳     | Queues, presence and timers are per process; Redis adapter and shared queue in Phase 8            |
+| Item                                   | Status | Evidence                                                                                        |
+| -------------------------------------- | ------ | ----------------------------------------------------------------------------------------------- |
+| Create, list, join (ID or code), leave | ✅     | Idempotent create per `requestId`; one seat per user; host hand-over; empty room → CANCELLED    |
+| Private rooms                          | ✅     | Argon2 room password; hidden from the list; detail forbidden to outsiders                       |
+| Waiting room: ready, settings, start   | ✅     | WAITING ⇄ READY by shared transitions; host-only settings reset readiness; host-only start      |
+| Quick match                            | ✅     | Per-fee queue; four players → ready public room, match started; cancel; leaves queue on join    |
+| Socket.IO contract                     | ✅     | `contracts/realtime.ts`; cookie-authenticated handshake; foreign origins refused                |
+| Authoritative actions                  | ✅     | Row lock per match; membership, turn, ownership, combination checked; engine decides legality   |
+| Idempotent action IDs, state versions  | ✅     | Retried `actionId` applied once; stale version → `STALE_STATE`                                  |
+| Player-specific views                  | ✅     | Each view holds only the caller's hand; tests scan every view and notification for card IDs     |
+| Turn deadlines and timeouts            | ✅     | Server-owned deadline in the snapshot; timeout action applied once; timers rebuilt at boot      |
+| Disconnect and reconnect               | ✅     | Connected flag on seats; waiting-room seat freed after the grace period; reconnect resyncs      |
+| Match end                              | ✅     | Placements, statistics, gap-free event log; room FINISHED and seats freed; instant win at start |
+| Room cleanup                           | ✅     | Idle rooms expire (`ROOM_IDLE_MINUTES`)                                                         |
+| Web client                             | ✅     | Real API data source and socket notifications; selection label and Play disabled for non-combos |
+| Paid rooms                             | ✅     | Since Phase 6: fees charged at start, pool paid out at the end (see below)                      |
+| Multi-instance realtime                | ⏳     | Queues, presence and timers are per process; Redis adapter and shared queue in Phase 8          |
 
-## Phase 6 — Wallet and rewards ⏳
+## Phase 6 — Wallet and rewards ✅
 
-Ledger service, entry-fee policy, exactly-once settlement, refunds, daily rewards,
-concurrency and idempotency tests.
+Policy: [ECONOMY.md](ECONOMY.md). Integration tests: `test/integration/wallet.test.ts`
+(10 tests) against PostgreSQL. Results: `pnpm check` passed (164 shared, 27 server, 30 web
+unit tests); `pnpm test:integration` 60/60; real-stack browser suite 9/9, including
+`e2e-auth/wallet.spec.ts`. Preview browser suite 45/45; its lobby
+test also checks the wallet page.
+
+An auth browser test was fixed: it swapped in a revoked session cookie while the lobby was
+still making its own API calls, which (correctly) cleared the cookie before the step under
+test. It now swaps the cookie with no page open.
+
+| Item                                 | Status | Evidence                                                                                        |
+| ------------------------------------ | ------ | ----------------------------------------------------------------------------------------------- |
+| Policy written before implementation | ✅     | `docs/ECONOMY.md`: fees, payouts, rounding, refunds, disconnects, draws, daily reward           |
+| Ledger service                       | ✅     | Append-only rows, idempotency key per user, conditional balance update in one transaction       |
+| No overspending under concurrency    | ✅     | 15 parallel 1 000-coin debits on 10 000: exactly 10 succeed, balance 0, reconciled              |
+| Entry-fee policy                     | ✅     | Balance checked to join; all four fees charged at start, or none (`INSUFFICIENT_COINS`)         |
+| Settlement exactly once              | ✅     | In the finishing transaction; `settledAt`; one reward row per paid placement; pool paid in full |
+| Refunds and cancellation             | ✅     | `GameService.abort` refunds every fee once (second abort is a no-op); room cancelled            |
+| Daily rewards                        | ✅     | Vietnam-day periods, 7-day streak; concurrent claims credit once                                |
+| Achievements                         | ✅     | FIRST_MATCH, FIRST_WIN, TEN_MATCHES rewarded once at settlement                                 |
+| Transaction history                  | ✅     | `/wallet`, `/wallet/transactions` (cursor pages); wallet page in the web app                    |
+| Reconciliation                       | ✅     | `WalletService.reconcile` checked after every wallet test scenario                              |
+| Admin adjustments, abort tool        | ⏳     | Ledger supports `ADMIN_ADJUSTMENT` with a reason; the admin UI and audit entries are Phase 7    |
+
+Fix made while verifying Phase 6: a socket that disconnected while its connection was still
+being set up could leave the player marked as connected. Connections are now counted before
+any asynchronous work, and seat updates for one user run in order and record the current
+presence (the multiplayer and wallet tests passed three times in a row afterwards).
 
 ## Phase 7 — History, leaderboard, admin ⏳
 
@@ -144,5 +170,8 @@ backup documentation.
   Socket.IO only notifies, never carries private data, and clients refetch their own view.
 - **Disconnects:** a disconnected player keeps their match seat and is played by the timeout
   action; nobody wins or loses coins because of a disconnect.
+- **Economy:** fees are charged at match start (not reserved at join); payouts 50/30/20/0 % of
+  the whole pool, remainders to 1st place; penalties and chops move no coins; aborted matches
+  refund in full.
 - **Boot without dependencies:** the API starts even if PostgreSQL or Redis are down, and
   readiness reports 503 so orchestrators withhold traffic.

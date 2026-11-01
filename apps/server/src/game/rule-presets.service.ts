@@ -11,12 +11,6 @@ import { PrismaService } from '../prisma/prisma.service';
 const PRESET_KEY = 'default';
 const FALLBACK_TURN_TIMERS = [15, 30, 45];
 
-/**
- * Paid rooms open in Phase 6, when entry fees are charged and settled through the ledger.
- * Until then only free rooms are offered, so no match can promise coins it cannot pay.
- */
-const PAID_ROOMS_ENABLED = false;
-
 export interface ActivePreset {
   /** Null when no preset is stored (for example an unseeded database). */
   id: string | null;
@@ -78,9 +72,8 @@ export class RulePresetsService {
   }
 
   private options(entryFees: number[], turnTimers: number[]): RoomOptions {
-    const fees = PAID_ROOMS_ENABLED ? entryFees : entryFees.filter((fee) => fee === 0);
     return {
-      entryFees: fees.length ? [...fees].sort((a, b) => a - b) : [0],
+      entryFees: entryFees.length ? [...entryFees].sort((a, b) => a - b) : [0],
       turnTimers: turnTimers.length ? [...turnTimers].sort((a, b) => a - b) : FALLBACK_TURN_TIMERS,
     };
   }

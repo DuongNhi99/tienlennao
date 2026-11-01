@@ -13,6 +13,8 @@ import type {
   RoomListFilter,
   RoomOptions,
   RoomSummary,
+  WalletSummary,
+  WalletTransactionPage,
 } from '@tienlen/shared';
 
 /**
@@ -71,6 +73,9 @@ export interface GameDataSource {
   cancelMatchmaking(): Promise<MatchmakingStatus>;
 
   getLeaderboardPreview(): Promise<LeaderboardEntry[]>;
+  getWallet(): Promise<WalletSummary>;
+  /** Newest first; pass the previous page's `nextCursor` for older entries. */
+  listWalletTransactions(cursor?: string): Promise<WalletTransactionPage>;
   getDailyReward(): Promise<DailyRewardStatus>;
   claimDailyReward(): Promise<{ amount: number; balance: number }>;
   listNotifications(): Promise<NotificationItem[]>;

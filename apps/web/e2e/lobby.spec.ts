@@ -32,6 +32,14 @@ test('daily reward can be claimed once and updates the balance', async ({ page }
   await expect(page.getByText(/Bạn đã nhận 300 xu/)).toBeVisible();
   await expect(page.getByText(/Đã nhận hôm nay/)).toBeVisible();
   await expect(page.getByRole('link', { name: /^Ví xu: / })).toContainText('12.800');
+
+  // The wallet lists the claim first (client-side navigation keeps the preview state).
+  await page.getByRole('link', { name: /^Ví xu: / }).click();
+  await expect(page.getByRole('heading', { name: 'Ví xu' })).toBeVisible();
+  await expect(page.getByText('12.800 xu').first()).toBeVisible();
+  const first = page.getByRole('list', { name: 'Giao dịch' }).getByRole('listitem').first();
+  await expect(first).toContainText('Thưởng hằng ngày');
+  await expect(first).toContainText('+300 xu');
 });
 
 test('create a private room, then leave it', async ({ page }, testInfo) => {

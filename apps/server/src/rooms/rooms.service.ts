@@ -545,7 +545,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Entry fees are charged in Phase 6; joining already requires enough coins to pay. */
+  /** Joining needs enough coins for the fee, which is charged when the match starts. */
   private async assertBalance(userId: string, entryFee: number): Promise<void> {
     if (entryFee === 0) return;
     const wallet = await this.prisma.wallet.findUnique({ where: { userId } });

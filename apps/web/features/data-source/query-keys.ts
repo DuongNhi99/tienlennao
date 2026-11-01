@@ -11,5 +11,7 @@ export const queryKeys = {
   matchmaking: ['matchmaking'] as const,
   leaderboardPreview: ['leaderboard-preview'] as const,
   dailyReward: ['daily-reward'] as const,
+  wallet: ['wallet'] as const,
+  walletTransactions: ['wallet-transactions'] as const,
   notifications: ['notifications'] as const,
 };

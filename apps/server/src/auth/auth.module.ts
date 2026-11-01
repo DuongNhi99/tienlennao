@@ -2,11 +2,11 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AdminUsersController } from '../admin/admin-users.controller';
 import { MailService } from '../mail/mail.service';
-import { RateLimitService } from '../rate-limit/rate-limit.service';
+import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { AvatarStorageService } from '../users/avatar-storage.service';
 import { AvatarsController, UsersController } from '../users/users.controller';
 import { UsersService } from '../users/users.service';
-import { WalletService } from '../wallet/wallet.service';
+import { WalletModule } from '../wallet/wallet.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { EmailTokensService } from './email-tokens.service';
@@ -20,6 +20,7 @@ import { SessionsService } from './sessions.service';
  * global and run in order: Origin (CSRF) → Auth (session) → Roles.
  */
 @Module({
+  imports: [RateLimitModule, WalletModule],
   controllers: [AuthController, UsersController, AvatarsController, AdminUsersController],
   providers: [
     AuthService,
@@ -27,15 +28,13 @@ import { SessionsService } from './sessions.service';
     SessionsService,
     SessionCookie,
     EmailTokensService,
-    RateLimitService,
     MailService,
-    WalletService,
     UsersService,
     AvatarStorageService,
     { provide: APP_GUARD, useClass: OriginGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
-  exports: [SessionsService, PasswordService, RateLimitService, UsersService],
+  exports: [SessionsService, PasswordService, UsersService],
 })
 export class AuthModule {}
