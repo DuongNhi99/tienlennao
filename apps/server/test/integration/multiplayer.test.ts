@@ -21,7 +21,7 @@ import { Dealer } from '../../src/game/dealer';
 import { GameService } from '../../src/game/game.service';
 import { RoomsService } from '../../src/rooms/rooms.service';
 import { createTestApp, registerUser, type TestContext } from './helpers';
-import { choosePlay, TestDealer } from './play-helpers';
+import { choosePlay, playToEnd, TestDealer } from './play-helpers';
 
 const dealer = new TestDealer();
 let ctx: TestContext;
@@ -186,6 +186,31 @@ describe('rooms', () => {
     expect((await detail(host, roomId)).status).toBe('READY');
     await b.http.put(`${API}/rooms/${roomId}/ready`).send({ ready: false }).expect(200);
     expect((await detail(host, roomId)).status).toBe('WAITING');
+  });
+
+  it('can start with two players, never with one', { timeout: 120_000 }, async () => {
+    const [host, guest] = await players(2);
+    const roomId = await createRoom(host!);
+    await host!.http.put(`${API}/rooms/${roomId}/ready`).send({ ready: true }).expect(200);
+    // Alone and ready is not enough.
+    expect((await detail(host!, roomId)).status).toBe('WAITING');
+    const alone = await host!.http.post(`${API}/rooms/${roomId}/start`).expect(409);
+    expect(errorCode(alone.body)).toBe('ROOM_NOT_READY');
+
+    await guest!.http.post(`${API}/rooms/${roomId}/join`).send({}).expect(200);
+    await guest!.http.put(`${API}/rooms/${roomId}/ready`).send({ ready: true }).expect(200);
+    expect((await detail(host!, roomId)).status).toBe('READY');
+    await host!.http.post(`${API}/rooms/${roomId}/start`).expect(200);
+
+    const v = await view(guest!, roomId);
+    expect(v.seats).toHaveLength(2);
+    expect(v.myHand).toHaveLength(13);
+    expect(v.seats.map((s) => s.cardCount)).toEqual([13, 13]);
+    await playToEnd([host!, guest!], roomId);
+    const result = matchResultSchema.parse(
+      (await host!.http.get(`${API}/rooms/${roomId}/game/result`).expect(200)).body,
+    );
+    expect(result.placements.map((p) => p.placement)).toEqual([1, 2]);
   });
 
   it('lets only the host change settings, which resets readiness', async () => {
@@ -459,7 +484,7 @@ describe('instant wins', () => {
   it('finishes the match at the start and records the result', async () => {
     const table = await players(4);
     // Seat 2 gets all four 2s; the others keep ordinary hands.
-    const hands = dealer.deal();
+    const hands = dealer.deal(4);
     const twos: CardId[] = ['2S', '2C', '2D', '2H'];
     for (const seat of [0, 1, 3]) {
       for (const two of twos.filter((card) => hands[seat]!.includes(card))) {

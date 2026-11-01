@@ -24,6 +24,7 @@ import {
   matchmakingStatusSchema,
   notificationItemSchema,
   type NotificationItem,
+  MIN_PLAYERS_PER_MATCH,
   PLAYERS_PER_MATCH,
   type PlayerGameView,
   playerGameViewSchema,
@@ -386,9 +387,14 @@ export function createPreviewDataSource(): GameDataSource {
   function refreshReadiness(room: MockRoom) {
     if (room.status !== 'WAITING' && room.status !== 'READY') return;
     const full = playerCount(room) === PLAYERS_PER_MATCH;
-    room.status = full && room.seats.every((s) => s?.isReady) ? 'READY' : 'WAITING';
-    // Bot hosts start automatically once everyone is ready.
-    if (room.status === 'READY' && room.hostId !== ME.userId) {
+    const seated = room.seats.filter((s): s is MockSeat => s !== null);
+    // As on the server: READY with at least two seated players, all of them ready.
+    room.status =
+      seated.length >= MIN_PLAYERS_PER_MATCH && seated.every((s) => s.isReady)
+        ? 'READY'
+        : 'WAITING';
+    // Bot hosts wait for a full table, then start automatically.
+    if (full && room.status === 'READY' && room.hostId !== ME.userId) {
       schedule(`autostart:${room.id}`, AUTO_START_DELAY_MS, () => {
         if (room.status === 'READY') {
           startGame(room);
@@ -692,7 +698,9 @@ export function createPreviewDataSource(): GameDataSource {
         .filter((r) => filter.maxEntryFee === undefined || r.entryFee <= filter.maxEntryFee)
         .filter(
           (r) =>
-            !filter.onlyWithSeats || (r.status === 'WAITING' && playerCount(r) < PLAYERS_PER_MATCH),
+            !filter.onlyWithSeats ||
+            ((r.status === 'WAITING' || r.status === 'READY') &&
+              playerCount(r) < PLAYERS_PER_MATCH),
         )
         .sort((a, b) => Number(a.status !== 'WAITING') - Number(b.status !== 'WAITING'))
         .map(toSummary);

@@ -171,6 +171,13 @@ which TypeScript project a web file belongs to and reported a parsing error on e
 | Web push notifications              | ⏳     | Optional in the specification; not implemented                                                    |
 | Reward tables as admin settings     | ⏳     | Kept as reviewed code constants (docs/ECONOMY.md), by decision                                    |
 
+## Changes after Phase 7 ✅
+
+| Item                               | Status | Evidence                                                                                                                                                                                                                                      |
+| ---------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Email-in-use check at registration | ✅     | `POST /auth/email-availability` (same normalization, rate-limited per IP); the form checks on blur; integration and browser tests                                                                                                             |
+| Matches with 2, 3 or 4 players     | ✅     | READY with ≥ 2 seated players all ready; engine deals 13 each; payouts 50/30/20/0, 70/30/0, 100/0; simulated 2- and 3-player matches; integration tests for a 2-player match and a 3-player paid settlement; browser test of a 2-player start |
+
 ## Phase 8 — Quality and deployment ⏳
 
 Dockerfiles for web and server, Playwright end-to-end tests, load tests, deployment and
@@ -197,6 +204,8 @@ backup documentation.
   Socket.IO only notifies, never carries private data, and clients refetch their own view.
 - **Disconnects:** a disconnected player keeps their match seat and is played by the timeout
   action; nobody wins or loses coins because of a disconnect.
+- **Player count:** 2–4 players per match; each gets 13 cards, unused cards stay hidden;
+  the weakest dealt card opens. Quick match still waits for four players.
 - **Economy:** fees are charged at match start (not reserved at join); payouts 50/30/20/0 % of
   the whole pool, remainders to 1st place; penalties and chops move no coins; aborted matches
   refund in full.

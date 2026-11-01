@@ -1,5 +1,8 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import {
+  type EmailAvailabilityRequest,
+  emailAvailabilityRequestSchema,
+  type EmailAvailabilityResponse,
   type AuthResponse,
   type ForgotPasswordRequest,
   forgotPasswordRequestSchema,
@@ -42,6 +45,17 @@ export class AuthController {
     const { user, session } = await this.auth.register(body, clientInfo(req));
     await this.replaceSession(req, res, session);
     return { user };
+  }
+
+  /** 200 { available }. Used by the registration form before submitting; 429 when abused. */
+  @Public()
+  @Post('email-availability')
+  @HttpCode(HttpStatus.OK)
+  async emailAvailability(
+    @Body(new ZodValidationPipe(emailAvailabilityRequestSchema)) body: EmailAvailabilityRequest,
+    @Req() req: Request,
+  ): Promise<EmailAvailabilityResponse> {
+    return { available: await this.auth.isEmailAvailable(body.email, clientInfo(req)) };
   }
 
   /** 200: signed in. 401 INVALID_CREDENTIALS (generic), 403 ACCOUNT_SUSPENDED, 429. */

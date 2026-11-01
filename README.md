@@ -1,6 +1,6 @@
 # Tiến Lên Online
 
-A Vietnamese multiplayer card game (**Tiến Lên Miền Nam**, four players) delivered as a
+A Vietnamese multiplayer card game (**Tiến Lên Miền Nam**, 2–4 players) delivered as a
 responsive, installable **Next.js PWA** with a **NestJS** backend.
 
 > All coin values are **virtual game points**. There are no deposits, withdrawals, payments,
@@ -349,7 +349,8 @@ How the server keeps play authoritative:
   waiting room the seat is freed after `RECONNECT_GRACE_SECONDS`. In a match the player keeps
   the seat and the timeout action plays for them until they return; nobody is awarded a win
   or coins because of it. Reconnecting simply refetches the authoritative view.
-- **Lifecycle.** The host starts a READY room (four ready players); quick match starts its own
+- **Lifecycle.** A room is READY when at least two players are seated and all of them are
+  ready; the host can then start with 2, 3 or 4 players. Quick match waits for four and starts its own
   room. Rooms that never start expire after `ROOM_IDLE_MINUTES`. When a match finishes, the
   placements and statistics are stored, the room becomes FINISHED and its seats are freed.
 - **Coins.** Entry fees are charged when a match starts and the pool is paid out when it

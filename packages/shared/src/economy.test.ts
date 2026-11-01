@@ -24,6 +24,20 @@ describe('calculatePayouts', () => {
     }
   });
 
+  it('uses the table for the number of players: 70/30/0 for three, winner takes all for two', () => {
+    expect(calculatePayouts(100, 3)).toEqual([210, 90, 0]);
+    expect(calculatePayouts(100, 2)).toEqual([200, 0]);
+    for (const players of [2, 3, 4]) {
+      for (const fee of [1, 7, 333]) {
+        const payouts = calculatePayouts(fee, players);
+        expect(payouts).toHaveLength(players);
+        expect(payouts.reduce((a, b) => a + b, 0)).toBe(fee * players);
+      }
+    }
+    expect(() => calculatePayouts(100, 1)).toThrow(RangeError);
+    expect(() => calculatePayouts(100, 5)).toThrow(RangeError);
+  });
+
   it('rejects negative or fractional fees', () => {
     expect(() => calculatePayouts(-1)).toThrow(RangeError);
     expect(() => calculatePayouts(1.5)).toThrow(RangeError);

@@ -58,6 +58,7 @@ export default defineConfig({
       timeout: 600_000,
       reuseExistingServer: false,
       env: {
+        NEXT_DIST_DIR: '.next-e2e',
         NEXT_PUBLIC_UI_PREVIEW: 'false',
         NEXT_PUBLIC_API_URL: API_URL,
         API_INTERNAL_URL: API_URL,

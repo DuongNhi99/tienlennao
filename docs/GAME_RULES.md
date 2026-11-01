@@ -11,10 +11,13 @@ when it starts, so later preset changes never affect a running or finished match
 
 ## 1. Deck, players and dealing
 
-- Standard 52-card deck, four players, thirteen cards each. All 52 cards are dealt.
+- Standard 52-card deck. A match has **2, 3 or 4 players**; a table has four seats.
+- Every player gets thirteen cards. With four players all 52 cards are dealt; with two or
+  three, the remaining 26 or 13 cards are not used and nobody sees them.
 - Production shuffling uses the platform CSPRNG (`crypto.getRandomValues`) with rejection
   sampling and a Fisher–Yates shuffle. Seeded shuffling exists only for deterministic tests.
-- Cards are dealt one at a time in seat order (card _i_ goes to seat _i_ mod 4).
+- Cards are dealt one at a time in seat order (card _i_ goes to player _i_ mod _n_). Players are
+  numbered in the order of their table seats.
 
 ## 2. Card order
 
@@ -82,7 +85,9 @@ A player who has passed cannot chop later in the same trick.
 
 ## 7. Opening the match
 
-- The holder of the lowest card (3♠ under the default suit order) takes the first turn.
+- The holder of the lowest **dealt** card takes the first turn: 3♠ under the default suit
+  order, which is always dealt with four players. With two or three players 3♠ may be among
+  the unused cards; the weakest card that was dealt opens instead (for example 3♣).
 - **Configurable** (`opening`):
   - `HOLDER_MUST_PLAY_LOWEST` (default): the first combination of the match must contain
     that card.

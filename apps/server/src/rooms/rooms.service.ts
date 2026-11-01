@@ -11,6 +11,7 @@ import type { Prisma, RoomStatus } from '@prisma/client';
 import {
   assertTransition,
   type CreateRoomRequest,
+  MIN_PLAYERS_PER_MATCH,
   PLAYERS_PER_MATCH,
   type PublicPlayer,
   ROOM_CODE_ALPHABET,
@@ -133,7 +134,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
       .filter(
         (room) =>
           !filter.onlyWithSeats ||
-          (room.status === 'WAITING' && room._count.players < PLAYERS_PER_MATCH),
+          (JOINABLE_STATUSES.includes(room.status) && room._count.players < PLAYERS_PER_MATCH),
       )
       .sort(
         (a, b) =>
@@ -486,14 +487,18 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     return room;
   }
 
-  /** WAITING ⇄ READY: READY exactly when all four seats are taken and everyone is ready. */
+  /**
+   * WAITING ⇄ READY: READY when at least two players are seated and every seated player is
+   * ready. The host may then start; empty seats stay open until the match starts.
+   */
   private async refreshStatus(tx: Prisma.TransactionClient, roomId: string): Promise<void> {
     const room = await tx.room.findUniqueOrThrow({
       where: { id: roomId },
       include: { players: true },
     });
     if (!JOINABLE_STATUSES.includes(room.status)) return;
-    const ready = room.players.length === PLAYERS_PER_MATCH && room.players.every((p) => p.isReady);
+    const ready =
+      room.players.length >= MIN_PLAYERS_PER_MATCH && room.players.every((p) => p.isReady);
     const next: RoomStatus = ready ? 'READY' : 'WAITING';
     if (next === room.status) return;
     assertTransition(ROOM_TRANSITIONS, room.status, next);

@@ -6,10 +6,19 @@ import {
   type RegisterRequest,
   type ResetPasswordRequest,
   type VerifyEmailRequest,
+  emailAvailabilityResponseSchema,
 } from '@tienlen/shared';
 import { apiRequest, noContentSchema } from '@/lib/api/client';
 
 // Real backend calls only; there are no mock responses for authentication, even in UI preview.
+
+export function checkEmailAvailable(email: string) {
+  return apiRequest('/auth/email-availability', {
+    method: 'POST',
+    body: { email },
+    schema: emailAvailabilityResponseSchema,
+  });
+}
 
 export function register(body: RegisterRequest) {
   return apiRequest('/auth/register', { method: 'POST', body, schema: authResponseSchema });

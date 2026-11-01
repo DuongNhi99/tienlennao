@@ -1,7 +1,12 @@
 'use client';
 
 import { useMutation } from '@tanstack/react-query';
-import { PLAYERS_PER_MATCH, type RoomDetail, type RoomSeat } from '@tienlen/shared';
+import {
+  MIN_PLAYERS_PER_MATCH,
+  PLAYERS_PER_MATCH,
+  type RoomDetail,
+  type RoomSeat,
+} from '@tienlen/shared';
 import {
   ArrowLeft,
   Check,
@@ -99,8 +104,9 @@ export function WaitingRoom({ room }: { room: RoomDetail }) {
   const me = room.mySeat === null ? null : room.seats[room.mySeat]!.player;
   const isHost = me?.isHost ?? false;
   const occupied = room.seats.filter((s) => s.player).length;
-  const allReady = room.seats.every((s) => s.player?.isReady);
-  const canStart = occupied === PLAYERS_PER_MATCH && allReady;
+  // Every seated player must be ready; empty seats do not block the start.
+  const allReady = room.seats.every((s) => !s.player || s.player.isReady);
+  const canStart = occupied >= MIN_PLAYERS_PER_MATCH && allReady;
 
   const onError = (error: unknown) => showToast(errorMessage(error), { variant: 'error' });
   const ready = useMutation({
@@ -117,11 +123,13 @@ export function WaitingRoom({ room }: { room: RoomDetail }) {
 
   const startHint = !isHost
     ? 'Chờ chủ phòng bắt đầu ván.'
-    : occupied < PLAYERS_PER_MATCH
-      ? `Cần đủ ${PLAYERS_PER_MATCH} người (hiện có ${occupied}).`
+    : occupied < MIN_PLAYERS_PER_MATCH
+      ? `Cần ít nhất ${MIN_PLAYERS_PER_MATCH} người (hiện có ${occupied}).`
       : !allReady
         ? 'Chờ mọi người bấm sẵn sàng.'
-        : 'Mọi người đã sẵn sàng!';
+        : occupied < PLAYERS_PER_MATCH
+          ? `Có thể bắt đầu với ${occupied} người, hoặc chờ thêm người vào.`
+          : 'Mọi người đã sẵn sàng!';
 
   return (
     <main

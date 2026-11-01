@@ -35,21 +35,21 @@ implements; the tests in `apps/server/test/integration/wallet.test.ts` check eac
 - Fees come from the active rule preset (`allowedEntryFees`, default 0, 100, 500, 1000, 5000).
 - Joining a room or the quick-match queue requires a balance of at least the fee. Nothing is
   reserved at that point.
-- The fee is **charged when the match starts**, inside the start transaction, for all four
-  players at once. If any player can no longer pay, nothing is charged, the match does not
+- The fee is **charged when the match starts**, inside the start transaction, for every
+  player (2–4) at once. If any player can no longer pay, nothing is charged, the match does not
   start and the host sees `INSUFFICIENT_COINS`.
 - Free rooms (fee 0) create no ledger rows.
 
 ## Payouts
 
-- The pool is four times the fee. It is paid out in full by placement; there is no house cut.
+- The pool is one fee per player. It is paid out in full by placement, using the table for
+  the number of players; there is no house cut.
 
-  | Placement | Share of the pool |
-  | --------- | ----------------- |
-  | 1st       | 50 %              |
-  | 2nd       | 30 %              |
-  | 3rd       | 20 %              |
-  | 4th       | 0 %               |
+  | Players | 1st   | 2nd  | 3rd  | 4th |
+  | ------- | ----- | ---- | ---- | --- |
+  | 4       | 50 %  | 30 % | 20 % | 0 % |
+  | 3       | 70 %  | 30 % | 0 %  | —   |
+  | 2       | 100 % | 0 %  | —    | —   |
 
 - Rounding: each share is rounded down to whole coins and the remainder goes to 1st place, so
   the payouts always add up to the pool exactly.
@@ -74,7 +74,7 @@ idempotency key as a second guard. Players are notified (`user:updated`) after c
 - A match that is **aborted** (by an administrator, Phase 7, or by an unrecoverable server
   error) refunds every entry fee in full (`MATCH_REFUND`) and pays no rewards.
 - Rooms that never start charge nothing, so expiring or leaving them needs no refund.
-- There are no draws: every finished match has four distinct placements.
+- There are no draws: every finished match has one distinct placement per player.
 
 ## Daily reward
 

@@ -46,6 +46,6 @@ export default defineConfig({
     url: `http://localhost:${PORT}`,
     timeout: 400_000,
     reuseExistingServer: !process.env.CI,
-    env: { NEXT_PUBLIC_UI_PREVIEW: 'true' },
+    env: { NEXT_PUBLIC_UI_PREVIEW: 'true', NEXT_DIST_DIR: '.next-preview' },
   },
 });

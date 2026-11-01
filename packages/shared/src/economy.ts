@@ -4,19 +4,28 @@ import { PLAYERS_PER_MATCH } from './constants/game';
  * Coin rules from docs/ECONOMY.md. All amounts are whole virtual coins; no floating point.
  */
 
-/** Share of the pool per placement (1st … 4th), in basis points. Sums to 10 000. */
-export const PAYOUT_SHARES_BPS: readonly number[] = [5000, 3000, 2000, 0];
+/**
+ * Share of the pool per placement (1st, 2nd …), in basis points, by number of players. Each
+ * table sums to 10 000.
+ */
+export const PAYOUT_SHARES_BPS: Readonly<Record<number, readonly number[]>> = {
+  2: [10_000, 0],
+  3: [7000, 3000, 0],
+  4: [5000, 3000, 2000, 0],
+};
 
 /**
- * Payout per placement (index 0 = 1st). Each share is rounded down and the remainder goes to
- * 1st place, so the payouts always add up to the whole pool (four entry fees).
+ * Payout per placement (index 0 = 1st). The pool is one entry fee per player. Each share is
+ * rounded down and the remainder goes to 1st place, so the payouts always add up to the pool.
  */
-export function calculatePayouts(entryFee: number): number[] {
+export function calculatePayouts(entryFee: number, players: number = PLAYERS_PER_MATCH): number[] {
   if (!Number.isSafeInteger(entryFee) || entryFee < 0) {
     throw new RangeError(`Invalid entry fee: ${entryFee}`);
   }
-  const pool = entryFee * PLAYERS_PER_MATCH;
-  const payouts = PAYOUT_SHARES_BPS.map((bps) => Math.floor((pool * bps) / 10_000));
+  const shares = PAYOUT_SHARES_BPS[players];
+  if (!shares) throw new RangeError(`Invalid number of players: ${players}`);
+  const pool = entryFee * players;
+  const payouts = shares.map((bps) => Math.floor((pool * bps) / 10_000));
   payouts[0]! += pool - payouts.reduce((sum, payout) => sum + payout, 0);
   return payouts;
 }

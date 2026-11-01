@@ -140,3 +140,30 @@ test('a browser player plays a full match against three API clients', async ({ p
   await page.goto('/notifications');
   await expect(page.getByText(/Hạng \d\/4 tại phòng/)).toBeVisible();
 });
+
+test('a room can start with two players', async ({ page }) => {
+  const bot = await registerBot(9);
+  await registerInBrowser(page);
+  await page.getByRole('button', { name: 'Tạo phòng' }).first().click();
+  await page
+    .getByRole('dialog', { name: 'Tạo phòng mới' })
+    .getByRole('button', { name: 'Tạo phòng' })
+    .click();
+  await expect(page).toHaveURL(/\/room\/[0-9a-f-]{36}$/);
+  const roomId = page.url().split('/').at(-1)!;
+
+  expect((await bot.post(`rooms/${roomId}/join`, { data: {} })).status()).toBe(200);
+  expect((await bot.put(`rooms/${roomId}/ready`, { data: { ready: true } })).status()).toBe(200);
+  await page.getByRole('button', { name: 'Sẵn sàng', exact: true }).click();
+  await expect(
+    page.getByText('Có thể bắt đầu với 2 người, hoặc chờ thêm người vào.'),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Bắt đầu' }).click();
+
+  // Two hands of 13: the browser player's own cards and one opponent.
+  await expect(page.getByRole('list', { name: /Bài của bạn/ }).getByRole('button')).toHaveCount(13);
+  const view = playerGameViewSchema.parse(await (await bot.get(`rooms/${roomId}/game`)).json());
+  expect(view.seats).toHaveLength(2);
+  expect(view.seats.every((seat) => seat.cardCount === 13)).toBe(true);
+  await bot.dispose();
+});

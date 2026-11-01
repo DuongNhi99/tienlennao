@@ -58,7 +58,7 @@ test('create a private room, then leave it', async ({ page }, testInfo) => {
   await expect(page).toHaveURL(/\/room\/[0-9a-f-]{36}$/);
   await expect(page.getByRole('heading', { name: 'Phòng thử nghiệm' })).toBeVisible();
   await expect(page.getByText(/đang chờ người chơi/)).toHaveCount(3);
-  await expect(page.getByText('Cần đủ 4 người (hiện có 1).')).toBeVisible();
+  await expect(page.getByText('Cần ít nhất 2 người (hiện có 1).')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Bắt đầu' })).toBeDisabled();
   await expectNoHorizontalOverflow(page);
   await snap(page, testInfo, 'waiting-room');

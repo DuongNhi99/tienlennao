@@ -83,6 +83,12 @@ export const loginRequestSchema = z.object({
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 
 export const forgotPasswordRequestSchema = z.object({ email: emailSchema });
+
+/** Registration form check while typing; registration itself still enforces uniqueness. */
+export const emailAvailabilityRequestSchema = z.object({ email: emailSchema });
+export type EmailAvailabilityRequest = z.infer<typeof emailAvailabilityRequestSchema>;
+export const emailAvailabilityResponseSchema = z.object({ available: z.boolean() });
+export type EmailAvailabilityResponse = z.infer<typeof emailAvailabilityResponseSchema>;
 export type ForgotPasswordRequest = z.infer<typeof forgotPasswordRequestSchema>;
 
 export const resetPasswordRequestSchema = z.object({

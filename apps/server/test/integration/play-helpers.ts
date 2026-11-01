@@ -36,11 +36,11 @@ export class TestDealer {
   readonly planned: CardId[][][] = [];
   private readonly random = createSeededRandom(2026);
 
-  deal(): CardId[][] {
+  deal(players: number): CardId[][] {
     const planned = this.planned.shift();
-    if (planned) return planned;
+    if (planned) return planned.slice(0, players);
     for (;;) {
-      const hands = dealCards(shuffleDeck(createDeck(), this.random));
+      const hands = dealCards(shuffleDeck(createDeck(), this.random), players);
       if (hands.every((hand) => !detectInstantWin(hand, DEFAULT_GAME_RULES.instantWins))) {
         return hands;
       }

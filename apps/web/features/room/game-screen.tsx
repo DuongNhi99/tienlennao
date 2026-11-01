@@ -8,7 +8,6 @@ import {
   DEFAULT_GAME_RULES,
   describeCombination,
   type GameSeat,
-  PLAYERS_PER_MATCH,
   type RoomDetail,
   sortCards,
 } from '@tienlen/shared';
@@ -107,8 +106,19 @@ export function GameScreen({ room }: { room: RoomDetail }) {
   // Players may pick cards while opponents move, so the selection survives other players'
   // actions; cards that have left the hand (played, or a new deal) drop out of it.
   const selected = new Set([...selection].filter((card) => view.myHand.includes(card)));
-  const seatAt = (offset: number): GameSeat =>
-    view.seats[(view.mySeat + offset) % PLAYERS_PER_MATCH]!;
+  // 2–4 players. Opponents in turn order: 2 → across; 3 → right, left; 4 → right, across, left.
+  const playerCount = view.seats.length;
+  const seatAt = (offset: number): GameSeat => view.seats[(view.mySeat + offset) % playerCount]!;
+  const opponent = (offset: number) => {
+    const seat = seatAt(offset);
+    return <PlayerSeat seat={seat} isTurn={view.turnSeat === seat.seatIndex} compact />;
+  };
+  const layout =
+    playerCount === 2
+      ? { top: opponent(1) }
+      : playerCount === 3
+        ? { right: opponent(1), left: opponent(2) }
+        : { right: opponent(1), top: opponent(2), left: opponent(3) };
   const nameOf = (seatIndex: number) =>
     seatIndex === view.mySeat ? 'Bạn' : (view.seats[seatIndex]?.displayName ?? '');
   const isMyTurn = view.turnSeat === view.mySeat;
@@ -154,13 +164,9 @@ export function GameScreen({ room }: { room: RoomDetail }) {
             </div>
           </header>
         }
-        right={
-          <PlayerSeat seat={seatAt(1)} isTurn={view.turnSeat === seatAt(1).seatIndex} compact />
-        }
-        top={<PlayerSeat seat={seatAt(2)} isTurn={view.turnSeat === seatAt(2).seatIndex} compact />}
-        left={
-          <PlayerSeat seat={seatAt(3)} isTurn={view.turnSeat === seatAt(3).seatIndex} compact />
-        }
+        right={layout.right ?? null}
+        top={layout.top ?? null}
+        left={layout.left ?? null}
         center={
           <CurrentTrick
             trick={view.currentTrick}

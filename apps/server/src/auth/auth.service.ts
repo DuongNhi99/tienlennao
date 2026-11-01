@@ -24,6 +24,8 @@ export const AUTH_RATE_LIMITS = {
   loginPerIp: { limit: 20, windowSeconds: 15 * 60 },
   loginPerEmail: { limit: 10, windowSeconds: 15 * 60 },
   registerPerIp: { limit: 10, windowSeconds: 60 * 60 },
+  /** The registration form checks each email it is given; generous, but bounded per IP. */
+  emailCheckPerIp: { limit: 60, windowSeconds: 60 * 60 },
   forgotPerIp: { limit: 10, windowSeconds: 60 * 60 },
   /** Exceeding this is silent, so the response never reveals whether the account exists. */
   forgotPerEmail: { limit: 3, windowSeconds: 60 * 60 },
@@ -81,6 +83,19 @@ export class AuthService {
     this.webUrl =
       config.get('WEB_APP_URL', { infer: true }) ?? config.get('WEB_ORIGIN', { infer: true })[0]!;
     this.initialBonus = config.get('INITIAL_COIN_BONUS', { infer: true });
+  }
+
+  /**
+   * Whether an email can still be registered. Registration reveals the same thing (409), so
+   * this adds no new information; it is rate-limited per IP against bulk probing.
+   */
+  async isEmailAvailable(email: string, client: ClientInfo): Promise<boolean> {
+    await this.rateLimit.enforce(
+      `email-check:ip:${client.ipAddress}`,
+      AUTH_RATE_LIMITS.emailCheckPerIp,
+    );
+    const user = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+    return user === null;
   }
 
   async register(input: RegisterRequest, client: ClientInfo) {

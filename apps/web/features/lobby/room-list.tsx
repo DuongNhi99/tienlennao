@@ -43,7 +43,9 @@ function RoomCard({
   onJoin: () => void;
   joining: boolean;
 }) {
-  const joinable = room.status === 'WAITING' && room.playerCount < PLAYERS_PER_MATCH;
+  // READY rooms can still take players until they start.
+  const joinable =
+    (room.status === 'WAITING' || room.status === 'READY') && room.playerCount < PLAYERS_PER_MATCH;
   const title = room.name ?? `Phòng ${room.code}`;
   return (
     <li className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-felt-800/70 p-4">

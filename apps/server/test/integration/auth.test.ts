@@ -89,6 +89,23 @@ describe('registration', () => {
     expect(await ctx.prisma.user.count({ where: { email } })).toBe(1);
   });
 
+  it('tells the registration form whether an email is still free', async () => {
+    const { email } = await registerUser(ctx.server);
+    const http = client(ctx.server, uniqueIdentity().ip);
+    const check = async (value: string) =>
+      (await http.post('/api/v1/auth/email-availability').send({ email: value }).expect(200))
+        .body as { available: boolean };
+
+    // The same normalization as registration: case and surrounding spaces do not matter.
+    expect(await check(` ${email.toUpperCase()} `)).toEqual({ available: false });
+    expect(await check(uniqueIdentity().email)).toEqual({ available: true });
+    const invalid = await http
+      .post('/api/v1/auth/email-availability')
+      .send({ email: 'not-an-email' })
+      .expect(400);
+    expect(errorCode(invalid.body)).toBe('VALIDATION_ERROR');
+  });
+
   it('validates input on the server with Vietnamese messages', async () => {
     const id = uniqueIdentity();
     const res = await client(ctx.server, id.ip)

@@ -277,6 +277,20 @@ describe('paid matches', () => {
     },
   );
 
+  it('settles a three-player match 70/30/0', { timeout: 120_000 }, async () => {
+    const table = await players(3);
+    const roomId = await paidRoom(table);
+    await table[0]!.http.post(`${API}/rooms/${roomId}/start`).expect(200);
+    await playToEnd(table, roomId);
+    const result = matchResultSchema.parse(
+      (await table[1]!.http.get(`${API}/rooms/${roomId}/game/result`).expect(200)).body,
+    );
+    expect(result.placements.map((p) => p.placement)).toEqual([1, 2, 3]);
+    expect(result.placements.map((p) => p.coinDelta)).toEqual([210 - FEE, 90 - FEE, -FEE]);
+    expect(calculatePayouts(FEE, 3)).toEqual([210, 90, 0]);
+    await expectReconciled(table.map((p) => p.userId));
+  });
+
   it('refunds every fee once when a match is aborted', async () => {
     const table = await players(4);
     const roomId = await paidRoom(table);

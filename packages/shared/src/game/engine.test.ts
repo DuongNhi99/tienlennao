@@ -67,7 +67,8 @@ function deal(fixed: string[]): CardId[][] {
 describe('startMatch', () => {
   it('rejects incomplete, oversized or overlapping deals', () => {
     const good = deal([]);
-    expect(() => startMatch(good.slice(0, 3), NO_INSTANT_WINS)).toThrow(/Invalid deal/);
+    expect(() => startMatch(good.slice(0, 1), NO_INSTANT_WINS)).toThrow(/Invalid deal/);
+    expect(() => startMatch([...good, good[0]!], NO_INSTANT_WINS)).toThrow(/Invalid deal/);
     expect(() => startMatch([good[0]!.slice(1), ...good.slice(1)], NO_INSTANT_WINS)).toThrow();
     expect(() => startMatch([good[0]!, good[0]!, good[2]!, good[3]!], NO_INSTANT_WINS)).toThrow();
   });
@@ -82,6 +83,18 @@ describe('startMatch', () => {
     expect(state).toMatchObject({ status: 'PLAYING', version: 0, turnSeat: 2, openingCard: '3S' });
     expect(state.passed).toEqual([false, false, false, false]);
     expect(state.hands[2]![0]).toBe('3S');
+  });
+
+  it('starts with two or three players; the weakest dealt card opens when 3♠ is not dealt', () => {
+    // Seats 0 and 1 of an ordered deal; 3♠ goes to a seat that does not play.
+    const two = deal(['3C 9D', '3D 9H', '3S']).slice(0, 2);
+    const { state } = startMatch(two, NO_INSTANT_WINS);
+    expect(state.hands).toHaveLength(2);
+    expect(state).toMatchObject({ turnSeat: 0, openingCard: '3C' });
+    expect(state.passed).toEqual([false, false]);
+
+    const three = startMatch(deal(['', '', '3S']).slice(0, 3), NO_INSTANT_WINS).state;
+    expect(three).toMatchObject({ turnSeat: 2, openingCard: '3S' });
   });
 
   it('uses the configured suit order for the opening card', () => {

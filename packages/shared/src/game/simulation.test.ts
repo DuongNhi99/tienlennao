@@ -18,9 +18,9 @@ import { DEFAULT_GAME_RULES, type GameRules } from './rules';
  * Plays whole matches with random legal moves (seeded, so failures are reproducible) and
  * checks the engine's invariants after every action.
  */
-function playMatch(seed: number, rules: GameRules) {
+function playMatch(seed: number, rules: GameRules, players = 4) {
   const random: RandomSource = createSeededRandom(seed);
-  const start = startMatch(dealCards(shuffleDeck(createDeck(), random)), rules);
+  const start = startMatch(dealCards(shuffleDeck(createDeck(), random), players), rules);
   let state = start.state;
   const log: EngineEvent[] = [...start.events];
   const played: CardId[] = [];
@@ -31,7 +31,7 @@ function playMatch(seed: number, rules: GameRules) {
     checkInvariants(state, played);
 
     // Someone else acting out of turn is always rejected.
-    const other = (seat + 1 + random.nextInt(3)) % 4;
+    const other = (seat + 1 + random.nextInt(players - 1)) % players;
     if (applyPass(state, other).ok)
       throw new Error(`Seed ${seed}: seat ${other} acted out of turn`);
 
@@ -59,14 +59,17 @@ function playMatch(seed: number, rules: GameRules) {
   return { state, log };
 }
 
+const ALL_CARDS: ReadonlySet<CardId> = new Set(ALL_CARD_IDS);
+
 /** Plain checks rather than `expect`: this runs after every action of every simulated match. */
 function checkInvariants(state: MatchState, played: CardId[]) {
   const fail = (message: string) => {
     throw new Error(`Invariant broken: ${message}`);
   };
-  // Every card is either in exactly one hand or has been played exactly once.
+  // Every dealt card is either in exactly one hand or has been played exactly once.
   const all = [...state.hands.flat(), ...played];
-  if (all.length !== ALL_CARD_IDS.length || new Set(all).size !== ALL_CARD_IDS.length) {
+  const dealt = state.hands.length * 13;
+  if (all.length !== dealt || new Set(all).size !== dealt || all.some((c) => !ALL_CARDS.has(c))) {
     fail('cards were duplicated or lost');
   }
   state.hands.forEach((hand, seat) => {
@@ -82,9 +85,9 @@ function checkInvariants(state: MatchState, played: CardId[]) {
   }
 }
 
-const RULE_SETS: [string, GameRules][] = [
-  ['default rules', DEFAULT_GAME_RULES],
-  ['FIRST_FINISHER', { ...DEFAULT_GAME_RULES, endCondition: 'FIRST_FINISHER' }],
+const RULE_SETS: [string, GameRules, number][] = [
+  ['default rules', DEFAULT_GAME_RULES, 4],
+  ['FIRST_FINISHER', { ...DEFAULT_GAME_RULES, endCondition: 'FIRST_FINISHER' }, 4],
   [
     'free opening, no bombs',
     {
@@ -92,18 +95,22 @@ const RULE_SETS: [string, GameRules][] = [
       opening: 'HOLDER_LEADS_FREELY',
       bombs: { threeConsecutivePairs: false, fourOfAKind: false, fourConsecutivePairs: false },
     },
+    4,
   ],
+  ['3 players', DEFAULT_GAME_RULES, 3],
+  ['2 players', DEFAULT_GAME_RULES, 2],
 ];
 
-describe.each(RULE_SETS)('simulated matches (%s)', (_, rules) => {
+describe.each(RULE_SETS)('simulated matches (%s)', (_, rules, players) => {
   it('finish with valid placements and conserve every card', { timeout: 60_000 }, () => {
     let instantWins = 0;
     let chops = 0;
     for (let seed = 1; seed <= 300; seed++) {
-      const { state, log } = playMatch(seed, rules);
+      const { state, log } = playMatch(seed, rules, players);
       const result = calculateMatchResult(state);
-      expect(result.placements.map((p) => p.seat).sort()).toEqual([0, 1, 2, 3]);
-      expect(result.placements.map((p) => p.placement)).toEqual([1, 2, 3, 4]);
+      const seats = Array.from({ length: players }, (_, i) => i);
+      expect(result.placements.map((p) => p.seat).sort()).toEqual(seats);
+      expect(result.placements.map((p) => p.placement)).toEqual(seats.map((i) => i + 1));
       expect(log.filter((e) => e.type === 'MATCH_FINISHED')).toHaveLength(1);
       expect(log.at(-1)).toMatchObject({ type: 'MATCH_FINISHED', winnerSeat: result.winnerSeat });
       chops += result.chops.length;
@@ -112,7 +119,7 @@ describe.each(RULE_SETS)('simulated matches (%s)', (_, rules) => {
         continue;
       }
       const finishers = log.filter((e) => e.type === 'PLAYER_FINISHED');
-      expect(finishers).toHaveLength(rules.endCondition === 'FIRST_FINISHER' ? 1 : 3);
+      expect(finishers).toHaveLength(rules.endCondition === 'FIRST_FINISHER' ? 1 : players - 1);
       expect(finishers.map((e) => e.type === 'PLAYER_FINISHED' && e.place)).toEqual(
         finishers.map((_, i) => i + 1),
       );

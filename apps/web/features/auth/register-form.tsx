@@ -4,6 +4,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import {
   DISPLAY_NAME_MAX,
   DISPLAY_NAME_MIN,
+  emailSchema,
+  ERROR_MESSAGES_VI,
   PASSWORD_MIN,
   registerFormSchema,
 } from '@tienlen/shared';
@@ -14,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { CheckboxField, FormError, PasswordField, TextField } from '@/components/ui/form-fields';
 import { ApiClientError, errorMessage } from '@/lib/api/client';
 import { navigateAfterSessionChange } from '@/lib/session-navigation';
-import { register as registerAccount } from './auth-api';
+import { checkEmailAvailable, register as registerAccount } from './auth-api';
 
 export function RegisterForm() {
   const [formError, setFormError] = useState<string | null>(null);
@@ -22,6 +24,8 @@ export function RegisterForm() {
     register,
     handleSubmit,
     setError,
+    clearErrors,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm({
     resolver: zodResolver(registerFormSchema),
@@ -35,6 +39,25 @@ export function RegisterForm() {
     },
   });
 
+  /**
+   * Tells the user early when an email is taken. Advisory only: registration still enforces
+   * uniqueness on the server, so a failed or rate-limited check is simply ignored.
+   */
+  const checkEmail = async () => {
+    const parsed = emailSchema.safeParse(getValues('email'));
+    if (!parsed.success) return;
+    try {
+      const { available } = await checkEmailAvailable(parsed.data);
+      // Ignore the answer if the user has typed a different email meanwhile.
+      const current = emailSchema.safeParse(getValues('email'));
+      if (!available && current.success && current.data === parsed.data) {
+        setError('email', { type: 'taken', message: ERROR_MESSAGES_VI.EMAIL_ALREADY_EXISTS });
+      }
+    } catch {
+      // Not a reason to block the form.
+    }
+  };
+
   const onSubmit = handleSubmit(async ({ confirmPassword, ...values }) => {
     setFormError(null);
     try {
@@ -43,7 +66,7 @@ export function RegisterForm() {
       navigateAfterSessionChange('/lobby');
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'EMAIL_ALREADY_EXISTS') {
-        setError('email', { message: error.message }, { shouldFocus: true });
+        setError('email', { type: 'taken', message: error.message }, { shouldFocus: true });
         return;
       }
       setFormError(errorMessage(error));
@@ -66,7 +89,12 @@ export function RegisterForm() {
         autoComplete="email"
         inputMode="email"
         error={errors.email?.message}
-        {...register('email')}
+        {...register('email', {
+          onBlur: () => void checkEmail(),
+          onChange: () => {
+            if (errors.email?.type === 'taken') clearErrors('email');
+          },
+        })}
       />
       <PasswordField
         label="Mật khẩu"

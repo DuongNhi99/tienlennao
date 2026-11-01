@@ -48,6 +48,22 @@ test('register: signed in with the starting balance and a verification reminder'
   await expect(page).toHaveURL(/\/lobby$/);
 });
 
+test('registration warns as soon as the email is already in use', async ({ browser }) => {
+  // A fresh visitor (no session) types the email registered above.
+  const page = await (await browser.newContext()).newPage();
+  await page.goto('/register');
+  const emailField = page.getByLabel('Email');
+  await emailField.fill(email.toUpperCase());
+  await emailField.blur();
+  await expect(page.getByText('Email này đã được sử dụng.')).toBeVisible();
+  // Changing the email clears the warning; a free email raises none.
+  await emailField.fill(`free-${Date.now()}@example.com`);
+  await expect(page.getByText('Email này đã được sử dụng.')).toHaveCount(0);
+  await emailField.blur();
+  await expect(page.getByText('Email này đã được sử dụng.')).toHaveCount(0);
+  await page.context().close();
+});
+
 test('the emailed link verifies the address', async ({ page }) => {
   const link = await linkFromEmail(email, /Subject: Xác minh email/);
   await page.goto(new URL(link).pathname + new URL(link).search);

@@ -1,3 +1,4 @@
+import { MIN_PLAYERS_PER_MATCH } from '../constants/game';
 import type { ErrorCode } from '../contracts/errors';
 import { type CardId, sortCards } from './cards';
 import {
@@ -144,11 +145,12 @@ export function startMatch(hands: readonly (readonly CardId[])[], rules: GameRul
   const parsed = gameRulesSchema.parse(rules);
   const cards = hands.flat();
   if (
-    hands.length !== parsed.players ||
+    hands.length < MIN_PLAYERS_PER_MATCH ||
+    hands.length > parsed.players ||
     hands.some((hand) => hand.length !== parsed.cardsPerPlayer) ||
     new Set(cards).size !== cards.length
   ) {
-    throw new Error('Invalid deal: each player needs a full hand of distinct cards.');
+    throw new Error('Invalid deal: 2–4 players, each with a full hand of distinct cards.');
   }
 
   const opener = determineOpeningPlayer(hands, parsed);
@@ -168,8 +170,8 @@ export function startMatch(hands: readonly (readonly CardId[])[], rules: GameRul
 
   // Highest-priority kind wins; ties go to the first seat in turn order from the opener.
   let best: { seat: number; kind: InstantWinKind; priority: number } | null = null;
-  for (let offset = 0; offset < parsed.players; offset++) {
-    const seat = (opener + offset) % parsed.players;
+  for (let offset = 0; offset < hands.length; offset++) {
+    const seat = (opener + offset) % hands.length;
     const kind = detectInstantWin(state.hands[seat]!, parsed.instantWins);
     const priority = kind === null ? -1 : parsed.instantWins.indexOf(kind);
     if (kind !== null && (best === null || priority < best.priority)) {

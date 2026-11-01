@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CARDS_PER_PLAYER, PLAYERS_PER_MATCH } from '../constants/game';
+import { CARDS_PER_PLAYER, MIN_PLAYERS_PER_MATCH, PLAYERS_PER_MATCH } from '../constants/game';
 import { MATCH_STATUSES } from '../constants/lifecycle';
 import { cardIdSchema } from '../game/cards';
 import { publicPlayerSchema } from './lobby';
@@ -40,7 +40,8 @@ export const playerGameViewSchema = z.object({
   entryFee: z.number().int().nonnegative(),
   mySeat: seatIndexSchema,
   myHand: z.array(cardIdSchema).max(CARDS_PER_PLAYER),
-  seats: z.array(gameSeatSchema).length(PLAYERS_PER_MATCH),
+  /** One per player in the match (2–4), indexed by seat. */
+  seats: z.array(gameSeatSchema).min(MIN_PLAYERS_PER_MATCH).max(PLAYERS_PER_MATCH),
   /** The combination currently on the table; null when a new trick starts. */
   currentTrick: trickPlaySchema.nullable(),
   turnSeat: seatIndexSchema.nullable(),
@@ -62,6 +63,7 @@ export const matchResultSchema = z.object({
         coinDelta: z.number().int(),
       }),
     )
-    .length(PLAYERS_PER_MATCH),
+    .min(MIN_PLAYERS_PER_MATCH)
+    .max(PLAYERS_PER_MATCH),
 });
 export type MatchResult = z.infer<typeof matchResultSchema>;

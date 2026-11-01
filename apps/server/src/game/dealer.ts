@@ -7,7 +7,8 @@ import { type CardId, createDeck, dealCards, shuffleDeck } from '@tienlen/shared
  */
 @Injectable()
 export class Dealer {
-  deal(): CardId[][] {
-    return dealCards(shuffleDeck(createDeck()));
+  /** 13 cards each for 2–4 players; with fewer than four, the rest of the deck is not used. */
+  deal(players: number): CardId[][] {
+    return dealCards(shuffleDeck(createDeck()), players);
   }
 }

@@ -3,6 +3,7 @@ dist/
 dist-e2e/
 coverage/
 .next/
+.next-*/
 out/
 *.tsbuildinfo
 next-env.d.ts

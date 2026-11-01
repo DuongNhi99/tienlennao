@@ -163,7 +163,8 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       assertTransition(MATCH_TRANSITIONS, 'DEALING', 'PLAYING');
 
       const rules = await this.presets.rulesFor(room.ruleConfigId);
-      const hands = this.dealer.deal();
+      // 2–4 players, numbered 0…n-1 in room-seat order for the match.
+      const hands = this.dealer.deal(room.players.length);
       const { state, events } = startMatch(hands, rules);
       const now = new Date();
       const deadline =
@@ -179,7 +180,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
           stateSnapshot: this.snapshot(state, deadline),
           startedAt: now,
           players: {
-            create: room.players.map((p) => ({ userId: p.userId, seatIndex: p.seatIndex })),
+            create: room.players.map((p, seatIndex) => ({ userId: p.userId, seatIndex })),
           },
           events: {
             create: {
@@ -468,10 +469,10 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     });
     if (match.settledAt) throw new Error(`Match ${matchId} is already settled`);
     const outcome = calculateMatchResult(state);
-    const payouts = calculatePayouts(match.entryFee);
+    const players = await tx.matchPlayer.findMany({ where: { matchId } });
+    const payouts = calculatePayouts(match.entryFee, players.length);
     const now = new Date();
 
-    const players = await tx.matchPlayer.findMany({ where: { matchId } });
     const userAt = (seat: number) => players.find((p) => p.seatIndex === seat)!.userId;
     for (const placement of outcome.placements) {
       const userId = userAt(placement.seat);
@@ -518,7 +519,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
           userId: userAt(placement.seat),
           type: 'MATCH_RESULT' as const,
           title: placement.placement === 1 ? 'Bạn đã về nhất!' : 'Kết quả ván đấu',
-          body: `Hạng ${placement.placement}/4 tại phòng ${match.room.code}${coins}.`,
+          body: `Hạng ${placement.placement}/${players.length} tại phòng ${match.room.code}${coins}.`,
           link: `/history/${matchId}`,
           dedupeKey: `match:${matchId}`,
         };

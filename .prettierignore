@@ -4,6 +4,7 @@ dist
 dist-e2e
 coverage
 .next
+.next-*
 .local
 next-env.d.ts
 apps/server/prisma/migrations/**/*.sql
