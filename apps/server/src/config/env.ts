@@ -70,6 +70,14 @@ export const envSchema = z.object({
     .max(24 * 60)
     .default(30),
   /**
+   * Share Socket.IO notifications and presence across API instances through Redis (REDIS_URL).
+   * Required when running more than one instance.
+   */
+  SOCKET_IO_REDIS_ADAPTER: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  /**
    * A player whose last connection dropped while in a waiting room loses the seat after this
    * many seconds. During a match, disconnected players keep their seat and time out normally.
    */

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Module } from '@nestjs/common';
+import { Module, RequestMethod } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { API_PREFIX, REQUEST_ID_HEADER } from '@tienlen/shared';
 import { LoggerModule } from 'nestjs-pino';
@@ -28,6 +28,8 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
     LoggerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) => ({
+        // Every route, in the path syntax of Nest 11 (the default '*' triggers a conversion warning).
+        forRoutes: [{ path: '{*path}', method: RequestMethod.ALL }],
         pinoHttp: {
           level: config.get('LOG_LEVEL', { infer: true }),
           // Accept a well-formed upstream correlation ID, otherwise generate one.

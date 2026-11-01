@@ -178,10 +178,38 @@ which TypeScript project a web file belongs to and reported a parsing error on e
 | Email-in-use check at registration | ✅     | `POST /auth/email-availability` (same normalization, rate-limited per IP); the form checks on blur; integration and browser tests                                                                                                             |
 | Matches with 2, 3 or 4 players     | ✅     | READY with ≥ 2 seated players all ready; engine deals 13 each; payouts 50/30/20/0, 70/30/0, 100/0; simulated 2- and 3-player matches; integration tests for a 2-player match and a 3-player paid settlement; browser test of a 2-player start |
 
-## Phase 8 — Quality and deployment ⏳
+## Phase 8 — Quality and deployment ✅
 
-Dockerfiles for web and server, Playwright end-to-end tests, load tests, deployment and
-backup documentation.
+Deployment and operations guide: [DEPLOYMENT.md](DEPLOYMENT.md). Results: `pnpm check` passed (174
+shared, 27 server, 30 web unit tests); `pnpm test:integration` 78/78; real-stack browser suite 12/12;
+preview browser suite 54/54 (unchanged web code since its last run); production builds of the API
+(compiled for the load test) and the web app (standalone, served and checked locally).
+
+| Item                                 | Status | Evidence                                                                                                                                                |
+| ------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Several API instances                | ✅     | Quick-match queue in PostgreSQL (advisory lock per fee); deadline sweep on every instance; presence via Socket.IO (cluster-wide with the Redis adapter) |
+| Socket.IO Redis adapter              | ✅     | `SOCKET_IO_REDIS_ADAPTER=true` with `REDIS_URL`; enabled in the Compose stack                                                                           |
+| Dockerfiles (API, web)               | 🟡     | Written; web standalone layout run and checked locally; images built and smoke-tested by the `docker` CI job (no Docker on the dev machine)             |
+| Compose: full production stack       | 🟡     | `pnpm app:up`: PostgreSQL, Redis, migrate + seed job, API, web; exercised by CI only                                                                    |
+| CI                                   | 🟡     | Jobs: check (lint, types, unit, integration, build), e2e (both Playwright suites), docker (build + smoke)                                               |
+| Load test                            | ✅     | 25 concurrent matches / 100 players: all finished, 8 915 requests, no errors (DEPLOYMENT.md §10)                                                        |
+| Full test suite, production builds   | ✅     | See the results below                                                                                                                                   |
+| Responsive layouts, PWA              | ✅     | Preview browser suite on phone, tablet and desktop; manifest, service worker, offline page                                                              |
+| Authentication and authorization     | ✅     | Integration tests (sessions, roles, admin 403/404) and the real-stack browser suite                                                                     |
+| WebSocket reconnect                  | ✅     | Integration tests: disconnect/reconnect flags, seat freed after grace; resync on reconnect                                                              |
+| Wallet concurrency                   | ✅     | Concurrent debits, concurrent daily claims, settlement once (wallet integration tests)                                                                  |
+| Deployment, backup and recovery docs | ✅     | DEPLOYMENT.md: proxy and HTTPS, configuration, first deployment, scaling, backup/restore drill, releases, runbook                                       |
+
+Fixes made during Phase 8:
+
+- `status()` of the quick-match queue read "room exists" and "player seated" in two queries;
+  while a room was being created it could see the room without the seat and drop the player's
+  queue entry. A concurrent 8-player test found it; the two are now read in one query.
+- `nestjs-pino` registered its middleware with the old `*` route syntax, which Nest 11
+  converted with a warning at every start; it now uses `{*path}`.
+
+`.github/workflows/ci.yml` has not run yet in this session: the repository's CI results are
+visible on GitHub after the push.
 
 ## Decisions recorded so far
 

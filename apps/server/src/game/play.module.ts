@@ -5,7 +5,6 @@ import { WalletModule } from '../wallet/wallet.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MatchmakingController } from '../matchmaking/matchmaking.controller';
 import { MatchmakingService } from '../matchmaking/matchmaking.service';
-import { PresenceService } from '../realtime/presence.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { RoomsController } from '../rooms/rooms.controller';
@@ -28,7 +27,6 @@ import { RulePresetsService } from './rule-presets.service';
     RoomsService,
     GameService,
     MatchmakingService,
-    PresenceService,
     RealtimeGateway,
   ],
   exports: [RoomsService, GameService],

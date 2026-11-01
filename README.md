@@ -7,8 +7,9 @@ responsive, installable **Next.js PWA** with a **NestJS** backend.
 > or real-world prize redemption. Adding any of these requires a separate legal, compliance,
 > and security review first.
 
-**Status:** Phases 1–7 (foundation, UI and PWA, accounts, game engine, multiplayer, wallet and
-rewards, history and administration) are complete. See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
+**Status:** Phases 1–8 (foundation, UI and PWA, accounts, game engine, multiplayer, wallet and
+rewards, history and administration, quality and deployment) are complete. Deployment and
+operations: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
 
 ---
 
@@ -132,26 +133,28 @@ when those features are built.
 
 ## Commands
 
-| Command                                    | What it does                                                               |
-| ------------------------------------------ | -------------------------------------------------------------------------- |
-| `pnpm dev`                                 | Build shared, then run shared (watch), server (watch), web (dev)           |
-| `pnpm build`                               | Production build of all packages (topological order)                       |
-| `pnpm check`                               | format:check + lint + typecheck + test                                     |
-| `pnpm lint`                                | ESLint (type-aware for server/shared; Next rules for web)                  |
-| `pnpm typecheck`                           | `tsc --noEmit` everywhere (web runs `next typegen` first)                  |
-| `pnpm test`                                | Vitest in every package                                                    |
-| `pnpm format`                              | Prettier write                                                             |
-| `pnpm db:migrate`                          | `prisma migrate dev` (create and apply migrations in development)          |
-| `pnpm db:deploy`                           | `prisma migrate deploy` (apply committed migrations; CI/production)        |
-| `pnpm db:seed`                             | Idempotent seed of reference data                                          |
-| `pnpm db:studio`                           | Prisma Studio                                                              |
-| `pnpm db:embedded`                         | Docker-less PostgreSQL (dev only, data in `.local/pgdata`)                 |
-| `pnpm services:up`                         | Start PostgreSQL + Redis containers                                        |
-| `pnpm test:integration`                    | API + real PostgreSQL (database `<name>_test`, created and emptied)        |
-| `pnpm db:set-role <email> ADMIN`           | Grant (or with `PLAYER`, remove) the admin role; audited                   |
-| `pnpm --filter @tienlen/web test:e2e`      | Playwright: production build in preview mode, 3 viewports                  |
-| `pnpm --filter @tienlen/web test:e2e:auth` | Playwright against the real API on ports 3200/4100 (`<name>_e2e` database) |
-| `pnpm --filter @tienlen/web icons`         | Regenerate the PWA PNG icons from `apps/web/assets/logo.svg`               |
+| Command                                    | What it does                                                                  |
+| ------------------------------------------ | ----------------------------------------------------------------------------- |
+| `pnpm dev`                                 | Build shared, then run shared (watch), server (watch), web (dev)              |
+| `pnpm build`                               | Production build of all packages (topological order)                          |
+| `pnpm check`                               | format:check + lint + typecheck + test                                        |
+| `pnpm lint`                                | ESLint (type-aware for server/shared; Next rules for web)                     |
+| `pnpm typecheck`                           | `tsc --noEmit` everywhere (web runs `next typegen` first)                     |
+| `pnpm test`                                | Vitest in every package                                                       |
+| `pnpm format`                              | Prettier write                                                                |
+| `pnpm db:migrate`                          | `prisma migrate dev` (create and apply migrations in development)             |
+| `pnpm db:deploy`                           | `prisma migrate deploy` (apply committed migrations; CI/production)           |
+| `pnpm db:seed`                             | Idempotent seed of reference data                                             |
+| `pnpm db:studio`                           | Prisma Studio                                                                 |
+| `pnpm db:embedded`                         | Docker-less PostgreSQL (dev only, data in `.local/pgdata`)                    |
+| `pnpm services:up`                         | Start PostgreSQL + Redis containers                                           |
+| `pnpm app:up` / `pnpm app:down`            | Build and run the production images (PostgreSQL, Redis, migrations, API, web) |
+| `pnpm load-test`                           | Concurrent full matches against a running API (see docs/DEPLOYMENT.md)        |
+| `pnpm test:integration`                    | API + real PostgreSQL (database `<name>_test`, created and emptied)           |
+| `pnpm db:set-role <email> ADMIN`           | Grant (or with `PLAYER`, remove) the admin role; audited                      |
+| `pnpm --filter @tienlen/web test:e2e`      | Playwright: production build in preview mode, 3 viewports                     |
+| `pnpm --filter @tienlen/web test:e2e:auth` | Playwright against the real API on ports 3200/4100 (`<name>_e2e` database)    |
+| `pnpm --filter @tienlen/web icons`         | Regenerate the PWA PNG icons from `apps/web/assets/logo.svg`                  |
 
 Production start: `pnpm --filter @tienlen/server start` (runs `dist/main.js`) and
 `pnpm --filter @tienlen/web start`.
@@ -342,9 +345,10 @@ How the server keeps play authoritative:
   and every event in `match_events`. The `DEALT` event holds the full deal for audit; it is
   never sent to clients. Each player's view contains only their own hand.
 - **Deadlines.** The server owns the deadline. One second after it, the server applies the
-  timeout action (pass, or lead the weakest card). Timers are rebuilt from the database when
-  the server starts, so a restart does not stall a match. If a player's action arrives first,
-  the timer sees a newer version and does nothing.
+  timeout action (pass, or lead the weakest card). An in-process timer usually does it; a sweep
+  that every instance runs every 2 seconds catches the rest (another instance's matches, or a
+  restart). If a player's action arrives first, the timeout sees a newer version and does
+  nothing; the match lock means a timeout is never applied twice.
 - **Disconnects.** A dropped socket marks the seat as disconnected, and the others see it. In a
   waiting room the seat is freed after `RECONNECT_GRACE_SECONDS`. In a match the player keeps
   the seat and the timeout action plays for them until they return; nobody is awarded a win
@@ -356,10 +360,11 @@ How the server keeps play authoritative:
 - **Coins.** Entry fees are charged when a match starts and the pool is paid out when it
   finishes, in the same transactions (see "Wallet and rewards" below).
 
-**Scaling.** Row locks and the database keep actions safe across API instances, but three
-pieces are still per process: quick-match queues, socket presence counts and turn timers.
-Run a single API instance until those move to Redis and Socket.IO uses the Redis adapter
-(Phase 8).
+**Scaling.** Several API instances can run side by side: actions and room changes use row
+locks, the quick-match queue is a PostgreSQL table claimed under an advisory lock, and turn
+deadlines are swept by every instance. Set `SOCKET_IO_REDIS_ADAPTER=true` (with `REDIS_URL`)
+so notifications and presence reach every instance, and use sticky sessions for `/api/`
+(Socket.IO long-polling). Details: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), "Scaling".
 
 ## Wallet and rewards (Phase 6)
 
@@ -448,13 +453,12 @@ Integrity is enforced in the database, not only in application code:
 
 - No Redis on the development machine used to verify Phase 1, so readiness was observed as
   `degraded`. The Redis code path is covered by the stubbed e2e tests only.
-- Docker files were written but not executed on the verification machine, which has no Docker.
-  CI runs against real PostgreSQL and Redis service containers.
+- The verification machine has no Docker. The images are built and smoke-tested by the
+  `docker` CI job; locally, the web image's standalone server was run and checked without
+  Docker.
 - Web push notifications are not implemented (optional); the in-app center is.
 - The leaderboard is computed from the database on demand and cached per process for a
   minute. Very large player counts would need a materialized table.
-- Quick-match queues, presence counts and turn timers live in one API process (see
-  "Scaling"). A restart empties the queues; matches resume from the database.
 - Open sockets are not closed when a session is revoked. They carry no private data, and the
   next REST call fails with 401.
 - Google OAuth is not implemented (optional in the specification).

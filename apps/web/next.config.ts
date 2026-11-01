@@ -38,6 +38,8 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   // Browser tests build into their own folder, so they never clash with a running `next dev`.
   distDir: process.env.NEXT_DIST_DIR || '.next',
+  // Docker images ship the self-contained server (apps/web/Dockerfile sets NEXT_OUTPUT).
+  output: process.env.NEXT_OUTPUT === 'standalone' ? 'standalone' : undefined,
   reactStrictMode: true,
   poweredByHeader: false,
   turbopack: { root: workspaceRoot },

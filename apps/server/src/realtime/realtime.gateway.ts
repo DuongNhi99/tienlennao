@@ -10,7 +10,6 @@ import type { Socket } from 'socket.io';
 import { SessionsService } from '../auth/sessions.service';
 import { describeError } from '../common/errors/describe-error';
 import { RoomsService } from '../rooms/rooms.service';
-import { PresenceService } from './presence.service';
 import { type RealtimeServer, RealtimeService, userChannel } from './realtime.service';
 
 interface SocketData {
@@ -41,15 +40,16 @@ export function readSessionToken(header: string | undefined): string | undefined
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
   private readonly writes = new Map<string, Promise<void>>();
+  private server: RealtimeServer | null = null;
 
   constructor(
     private readonly sessions: SessionsService,
-    private readonly presence: PresenceService,
     private readonly realtime: RealtimeService,
     private readonly rooms: RoomsService,
   ) {}
 
   afterInit(server: RealtimeServer): void {
+    this.server = server;
     this.realtime.attach(server);
     server.use((socket, next) => {
       this.authenticate(socket).then(
@@ -69,15 +69,19 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   async handleConnection(socket: Socket): Promise<void> {
     const { userId } = socket.data as SocketData;
-    // Counted before any await, so a disconnect that arrives meanwhile is counted after it.
-    const first = this.presence.connect(userId);
     await socket.join(userChannel(userId));
-    if (first) await this.recordConnection(userId);
+    await this.recordConnection(userId);
   }
 
   async handleDisconnect(socket: Socket): Promise<void> {
     const { userId } = socket.data as Partial<SocketData>;
-    if (userId && this.presence.disconnect(userId)) await this.recordConnection(userId);
+    if (userId) await this.recordConnection(userId);
+  }
+
+  /** True while the user has a socket on any API instance (cluster-wide with the Redis adapter). */
+  private async isOnline(userId: string): Promise<boolean> {
+    const sockets = await this.server?.in(userChannel(userId)).fetchSockets();
+    return (sockets?.length ?? 0) > 0;
   }
 
   /**
@@ -87,7 +91,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
    */
   private recordConnection(userId: string): Promise<void> {
     const run = (this.writes.get(userId) ?? Promise.resolve())
-      .then(() => this.rooms.setConnected(userId, this.presence.isOnline(userId)))
+      .then(async () => this.rooms.setConnected(userId, await this.isOnline(userId)))
       .catch((error: unknown) =>
         this.logger.warn(`Could not record connection change: ${describeError(error)}`),
       );

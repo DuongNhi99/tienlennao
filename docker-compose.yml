@@ -1,5 +1,17 @@
-# Local development services. Start with: pnpm services:up
+# Local services. `pnpm services:up` starts PostgreSQL and Redis for development.
+# `pnpm app:up` also builds and starts the API and web images (profile "app"), the way they run
+# in production; see docs/DEPLOYMENT.md.
 name: tien-len-online
+
+x-server-env: &server-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://${POSTGRES_USER:-tienlen}:${POSTGRES_PASSWORD:-tienlen_dev_password}@postgres:5432/${POSTGRES_DB:-tienlen}?schema=public
+  REDIS_URL: redis://redis:6379
+  WEB_ORIGIN: ${APP_WEB_ORIGIN:-http://localhost:3000}
+  WEB_APP_URL: ${APP_WEB_ORIGIN:-http://localhost:3000}
+  API_PUBLIC_URL: ${APP_API_URL:-http://localhost:4000/api/v1}
+  SOCKET_IO_REDIS_ADAPTER: 'true'
+  LOG_LEVEL: info
 
 services:
   postgres:
@@ -33,6 +45,58 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-off: applies pending migrations and seeds reference data, then exits.
+  migrate:
+    profiles: [app]
+    image: tienlen-server
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    environment: *server-env
+    command:
+      [
+        'sh',
+        '-c',
+        'node_modules/.bin/prisma migrate deploy && node_modules/.bin/tsx prisma/seed.ts',
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  server:
+    profiles: [app]
+    image: tienlen-server
+    restart: unless-stopped
+    environment: *server-env
+    ports:
+      - '127.0.0.1:4000:4000'
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  web:
+    profiles: [app]
+    image: tienlen-web
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${APP_API_URL:-http://localhost:4000/api/v1}
+    restart: unless-stopped
+    environment:
+      # Server-side rendering reaches the API over the internal network.
+      API_INTERNAL_URL: http://server:4000/api/v1
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      server:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   redis-data:
+  uploads:

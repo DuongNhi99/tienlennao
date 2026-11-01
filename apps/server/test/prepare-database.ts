@@ -3,7 +3,7 @@ import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
 
 const serverDir = path.resolve(__dirname, '..');
-const THROWAWAY_SUFFIXES = ['_test', '_e2e'];
+const THROWAWAY_SUFFIXES = ['_test', '_e2e', '_load'];
 
 /**
  * Creates (if missing), migrates and empties a throwaway database for automated tests.
@@ -14,7 +14,9 @@ export async function prepareThrowawayDatabase(databaseUrl: string): Promise<voi
   const url = new URL(databaseUrl);
   const database = decodeURIComponent(url.pathname.slice(1));
   if (!THROWAWAY_SUFFIXES.some((suffix) => database.endsWith(suffix))) {
-    throw new Error(`Refusing to prepare "${database}": the name must end in _test or _e2e.`);
+    throw new Error(
+      `Refusing to prepare "${database}": the name must end in _test, _e2e or _load.`,
+    );
   }
 
   // CREATE DATABASE must run while connected to another database on the same server.
@@ -46,7 +48,7 @@ export async function prepareThrowawayDatabase(databaseUrl: string): Promise<voi
 }
 
 /** `<database>_<suffix>` on the same server as `baseUrl`. */
-export function throwawayUrl(baseUrl: string, suffix: '_test' | '_e2e'): string {
+export function throwawayUrl(baseUrl: string, suffix: '_test' | '_e2e' | '_load'): string {
   const url = new URL(baseUrl);
   url.pathname = `${url.pathname.replace(/\/$/, '')}${suffix}`;
   return url.toString();

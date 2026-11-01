@@ -27,7 +27,10 @@
     "db:studio": "pnpm --filter @tienlen/server db:studio",
     "db:embedded": "node scripts/embedded-postgres.mjs",
     "services:up": "docker compose up -d postgres redis",
-    "services:down": "docker compose down"
+    "services:down": "docker compose down",
+    "app:up": "docker compose --profile app up -d --build",
+    "app:down": "docker compose --profile app down",
+    "load-test": "pnpm --filter @tienlen/server exec tsx test/load/load-test.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

@@ -28,6 +28,7 @@
     "@nestjs/websockets": "^11.2.8",
     "@node-rs/argon2": "^2.2.2",
     "@prisma/client": "~6.19.0",
+    "@socket.io/redis-adapter": "^8.3.0",
     "@tienlen/shared": "workspace:*",
     "cookie-parser": "^1.4.7",
     "helmet": "^8.1.0",

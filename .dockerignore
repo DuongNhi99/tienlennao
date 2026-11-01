@@ -1,0 +1,16 @@
+# Build contexts only need sources; dependencies and outputs are rebuilt inside the image.
+**/node_modules
+**/.next
+**/.next-*
+**/dist
+**/dist-e2e
+**/.local
+**/coverage
+**/test-results
+**/playwright-report
+**/*.log
+.git
+.github
+.env
+.env.*
+!.env.example

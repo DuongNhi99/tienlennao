@@ -42,6 +42,8 @@ import { RulePresetsService } from './rule-presets.service';
 
 /** Extra time after the displayed deadline before the timeout action runs (network latency). */
 const TURN_GRACE_MS = 1_000;
+/** How often every instance looks for overdue turns (see `sweepDeadlines`). */
+const DEADLINE_SWEEP_MS = 2_000;
 
 /** `matches.stateSnapshot`: the engine state plus the server-owned turn deadline. */
 interface MatchSnapshot {
@@ -100,6 +102,7 @@ interface Committed {
 export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(GameService.name);
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  private sweeper: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -113,6 +116,12 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    this.sweeper = setInterval(() => {
+      this.sweepDeadlines().catch((error: unknown) =>
+        this.logger.warn(`Deadline sweep failed: ${describeError(error)}`),
+      );
+    }, DEADLINE_SWEEP_MS);
+    this.sweeper.unref();
     try {
       const playing = await this.prisma.match.findMany({
         where: { status: 'PLAYING' },
@@ -129,6 +138,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
+    if (this.sweeper) clearInterval(this.sweeper);
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
   }
@@ -290,6 +300,25 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     if (!committed) return false;
     this.afterCommit(committed, false);
     return true;
+  }
+
+  /**
+   * Applies the timeout action to every running match whose deadline (plus grace) has passed.
+   * In-process timers usually get there first; this sweep, run by every instance, covers
+   * matches whose timer lives on another instance or on one that stopped. `expireTurn` locks
+   * the match and checks its version, so concurrent sweeps never apply a timeout twice.
+   */
+  async sweepDeadlines(now = new Date()): Promise<number> {
+    const cutoff = new Date(now.getTime() - TURN_GRACE_MS);
+    const due = await this.prisma.$queryRaw<{ id: string; stateVersion: number }[]>`
+      SELECT id, "stateVersion" FROM matches
+      WHERE status = 'PLAYING'
+        AND ("stateSnapshot"->>'turnDeadline')::timestamptz <= ${cutoff}`;
+    let applied = 0;
+    for (const match of due) {
+      if (await this.expireTurn(match.id, match.stateVersion, now)) applied++;
+    }
+    return applied;
   }
 
   // ─── Views ────────────────────────────────────────────────────────────────

@@ -28,7 +28,15 @@ export function configureApp(app: INestApplication): void {
     exposedHeaders: [REQUEST_ID_HEADER],
   });
   app.setGlobalPrefix(API_PREFIX);
-  app.useWebSocketAdapter(new SocketIoAdapter(app, config.get('WEB_ORIGIN', { infer: true })));
+  app.useWebSocketAdapter(
+    new SocketIoAdapter(
+      app,
+      config.get('WEB_ORIGIN', { infer: true }),
+      config.get('SOCKET_IO_REDIS_ADAPTER', { infer: true })
+        ? config.get('REDIS_URL', { infer: true })
+        : undefined,
+    ),
+  );
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableShutdownHooks();
 }

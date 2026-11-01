@@ -55,3 +55,80 @@ jobs:
         run: pnpm test:integration
       - run: pnpm db:seed
       - run: pnpm build
+
+  e2e:
+    # Browser tests: the preview UI suite and the real stack (API + PostgreSQL).
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tienlen
+          POSTGRES_PASSWORD: tienlen_ci_password
+          POSTGRES_DB: tienlen
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tienlen -d tienlen"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://tienlen:tienlen_ci_password@localhost:5432/tienlen?schema=public
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm build:shared
+      - run: pnpm --filter @tienlen/web exec playwright install --with-deps chromium
+      - name: UI preview suite (mock data)
+        run: pnpm --filter @tienlen/web test:e2e
+      - name: Real-stack suite (API + PostgreSQL, database tienlen_e2e)
+        run: pnpm --filter @tienlen/web test:e2e:auth
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: |
+            apps/web/test-results
+            apps/web/playwright-report
+          retention-days: 7
+
+  docker:
+    # Builds both images and smoke-tests the whole stack the way it runs in production.
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: docker compose --profile app build
+      - name: Start PostgreSQL, Redis, migrations, API and web
+        run: docker compose --profile app up -d
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:4000/api/v1/health/ready && break
+            sleep 2
+          done
+          curl -fsS http://localhost:4000/api/v1/health/ready
+          for i in $(seq 1 60); do
+            curl -fsS -o /dev/null http://localhost:3000/ && break
+            sleep 2
+          done
+          curl -fsS http://localhost:3000/ | grep -q 'Tiến Lên Online'
+          curl -fsS http://localhost:3000/manifest.webmanifest > /dev/null
+          curl -fsS -o /dev/null -w '%{http_code}\n' http://localhost:3000/login
+      - name: Logs
+        if: always()
+        run: docker compose --profile app logs --no-color --tail 200
+      - name: Stop
+        if: always()
+        run: docker compose --profile app down -v

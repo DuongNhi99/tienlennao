@@ -352,7 +352,12 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
    * Builds a ready, public room for four matched players (quick match). Throws ALREADY_IN_ROOM
    * if any of them took a seat elsewhere in the meantime.
    */
-  async createQuickMatchRoom(userIds: readonly string[], entryFee: number): Promise<string> {
+  async createQuickMatchRoom(
+    userIds: readonly string[],
+    entryFee: number,
+    /** Chosen by the caller, so the queue can record the room before it exists. */
+    roomId?: string,
+  ): Promise<string> {
     const preset = await this.presets.active();
     const turnTimerSeconds = preset.options.turnTimers.includes(QUICK_MATCH_TURN_TIMER)
       ? QUICK_MATCH_TURN_TIMER
@@ -362,6 +367,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
         return await this.prisma.$transaction(async (tx) => {
           const room = await tx.room.create({
             data: {
+              ...(roomId ? { id: roomId } : {}),
               code: randomRoomCode(),
               name: QUICK_MATCH_NAME,
               hostId: userIds[0]!,

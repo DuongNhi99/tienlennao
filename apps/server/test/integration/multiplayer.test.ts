@@ -456,6 +456,29 @@ describe('a complete match between four independent clients', () => {
 });
 
 describe('turn deadlines', () => {
+  it('are enforced by a sweep that any instance can run, once', async () => {
+    const table = await players(4);
+    const roomId = await readyRoom(table);
+    await table[0]!.http.post(`${API}/rooms/${roomId}/start`).expect(200);
+    const match = await ctx.prisma.match.findFirstOrThrow({ where: { roomId } });
+    const game = ctx.app.get(GameService);
+    const later = new Date(Date.now() + 60_000);
+
+    // Seen from a minute later, the turn is overdue: one timeout, and only one.
+    expect(await game.sweepDeadlines(later)).toBeGreaterThanOrEqual(1);
+    const after = await ctx.prisma.match.findUniqueOrThrow({ where: { id: match.id } });
+    expect(after.stateVersion).toBe(match.stateVersion + 1);
+    const timeouts = await ctx.prisma.matchEvent.count({
+      where: { matchId: match.id, type: 'TURN_TIMEOUT' },
+    });
+    expect(timeouts).toBe(1);
+    // The next turn has a fresh deadline, so an immediate second sweep changes nothing.
+    await game.sweepDeadlines();
+    expect(
+      (await ctx.prisma.match.findUniqueOrThrow({ where: { id: match.id } })).stateVersion,
+    ).toBe(after.stateVersion);
+  });
+
   it('applies the timeout action once the deadline has passed', async () => {
     const table = await players(4);
     const roomId = await readyRoom(table);
@@ -573,6 +596,30 @@ describe('quick match', () => {
       expect((await view(p, roomId)).myHand).toHaveLength(13);
     }
     expect((await detail(table[0]!, roomId)).status).toBe('IN_PROGRESS');
+  });
+
+  it('forms separate tables when many players search at once', { timeout: 60_000 }, async () => {
+    const table = await players(8);
+    await Promise.all(
+      table.map((p) => p.http.post(`${API}/matchmaking`).send({ entryFee: 0 }).expect(201)),
+    );
+    // A request may return while another one is still seating its player (clients are told
+    // through matchmaking:updated), so wait until every search has settled.
+    const read = () =>
+      Promise.all(
+        table.map(async (p) =>
+          matchmakingStatusSchema.parse((await p.http.get(`${API}/matchmaking`).expect(200)).body),
+        ),
+      );
+    let statuses = await read();
+    await eventually(async () => {
+      statuses = await read();
+      return statuses.every((s) => s.state === 'MATCHED');
+    }, 'every player matched');
+    const rooms = new Map<string, number>();
+    for (const s of statuses) rooms.set(s.roomId!, (rooms.get(s.roomId!) ?? 0) + 1);
+    expect([...rooms.values()]).toEqual([4, 4]);
+    expect(await ctx.prisma.matchmakingEntry.count({ where: { roomId: null } })).toBe(0);
   });
 
   it('cancels a search, and rejects fees the preset does not offer', async () => {
