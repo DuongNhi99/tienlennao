@@ -90,6 +90,8 @@ export const leaderboardEntrySchema = publicPlayerSchema.extend({
   rank: z.number().int().positive(),
   wins: z.number().int().nonnegative(),
   matchesPlayed: z.number().int().nonnegative(),
+  /** Percentage with one decimal place (wins / matches played). */
+  winRate: z.number().min(0).max(100),
 });
 export type LeaderboardEntry = z.infer<typeof leaderboardEntrySchema>;
 
@@ -116,10 +118,20 @@ export const notificationItemSchema = z.object({
   type: notificationTypeSchema,
   title: z.string(),
   body: z.string(),
+  /** In-app path to open, e.g. a match in the history; null when there is nothing to open. */
+  link: z.string().startsWith('/').nullable(),
   createdAt: z.iso.datetime(),
   readAt: z.iso.datetime().nullable(),
 });
 export type NotificationItem = z.infer<typeof notificationItemSchema>;
+
+export const notificationPageSchema = z.object({
+  items: z.array(notificationItemSchema),
+  /** Pass as `cursor` for older notifications; null at the end. */
+  nextCursor: z.uuid().nullable(),
+  unreadCount: z.number().int().nonnegative(),
+});
+export type NotificationPage = z.infer<typeof notificationPageSchema>;
 
 export const matchmakingStatusSchema = z.object({
   state: z.enum(['IDLE', 'SEARCHING', 'MATCHED']),

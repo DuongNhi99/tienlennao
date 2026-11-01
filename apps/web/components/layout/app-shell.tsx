@@ -8,7 +8,7 @@ import { type ReactNode, useState } from 'react';
 import { CoinBalance } from '@/components/player/coin-balance';
 import { UserAvatar } from '@/components/player/user-avatar';
 import { Logo } from '@/components/ui/logo';
-import { EmailVerificationBanner, LogoutButton } from '@/features/auth/account-controls';
+import { EmailVerificationBanner, AdminLink, LogoutButton } from '@/features/auth/account-controls';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { NotificationPanel } from '@/features/notifications/notification-panel';
@@ -27,7 +27,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     queryKey: queryKeys.notifications,
     queryFn: () => source.listNotifications(),
   });
-  const unread = notifications.data?.filter((n) => n.readAt === null).length ?? 0;
+  const unread = notifications.data?.unreadCount ?? 0;
 
   return (
     <div className="flex min-h-screen-fit flex-col">
@@ -88,6 +88,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 />
               </Link>
             ) : null}
+            <AdminLink />
             <LogoutButton />
           </div>
         </div>

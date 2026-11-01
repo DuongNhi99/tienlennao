@@ -5,7 +5,7 @@ import { PATHNAME_HEADER } from '@/lib/request-headers';
 
 /**
  * Optimistic check for signed-in pages: without a session cookie, go straight to login. The
- * authoritative check (is the session valid?) happens in app/(game)/layout.tsx via the API.
+ * authoritative checks (is the session valid? is it an admin?) happen in the layouts via the API.
  */
 export function proxy(request: NextRequest) {
   if (isUiPreviewEnabled()) return NextResponse.next();
@@ -31,5 +31,6 @@ export const config = {
     '/history/:path*',
     '/leaderboard/:path*',
     '/notifications/:path*',
+    '/admin/:path*',
   ],
 };

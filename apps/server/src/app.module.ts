@@ -5,7 +5,10 @@ import { API_PREFIX, REQUEST_ID_HEADER } from '@tienlen/shared';
 import { LoggerModule } from 'nestjs-pino';
 import { type Env, validateEnv } from './config/env';
 import { AuthModule } from './auth/auth.module';
+import { AdminModule } from './admin/admin.module';
 import { PlayModule } from './game/play.module';
+import { HistoryModule } from './history/history.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
@@ -53,6 +56,9 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
     HealthModule,
     AuthModule,
     PlayModule,
+    HistoryModule,
+    NotificationsModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

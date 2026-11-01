@@ -7,8 +7,8 @@ responsive, installable **Next.js PWA** with a **NestJS** backend.
 > or real-world prize redemption. Adding any of these requires a separate legal, compliance,
 > and security review first.
 
-**Status:** Phases 1–6 (foundation, UI and PWA, accounts, game engine, multiplayer, wallet
-and rewards) are complete. See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
+**Status:** Phases 1–7 (foundation, UI and PWA, accounts, game engine, multiplayer, wallet and
+rewards, history and administration) are complete. See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
 
 ---
 
@@ -380,6 +380,50 @@ Balances only change through `LedgerService` (`apps/server/src/wallet`): one con
 concurrent debits cannot overspend. `WalletService.reconcile` checks a wallet against its
 ledger. The web app shows the balance, totals and history on `/wallet`.
 
+## History, leaderboard, notifications and admin (Phase 7)
+
+**Match history** (`/history`, `/history/:matchId`) lists only the caller's own finished or
+aborted matches, newest first, with cursor pages. Placements and `coinDelta` are the settled
+values (they equal the ledger rows for that match). The timeline contains public moves only:
+plays (played cards are public), passes, timeouts, tricks, finishes and the end. The deal is
+never included, and an abort reason is for administrators only. Anyone else asking for a
+match gets `404`.
+
+**Leaderboard** (`/leaderboard?metric&period&offset&limit`): `wins`, `winRate` and `played`,
+for the current week (from Monday 00:00 Vietnam time) or all time. Only finished matches of
+active accounts count; aborted matches never do. Win rate needs at least 5 matches in the
+week or 10 overall and is compared as exact fractions. Ties: fewer matches for `wins`, more
+wins for `winRate` and `played`; players still equal share a rank (1, 1, 3). Results are
+public (no emails), computed on the server and cached for a minute per board.
+
+**Notifications** (`/notifications`, `POST /notifications/:id/read`, `POST
+/notifications/read-all`): match results and cancellations, the daily reward being available
+(created once per Vietnam day when the list is opened), security events (password reset,
+sign-out everywhere) and administrator notices. Each has a de-duplication key, so repeated
+events create one notification. New ones are announced over Socket.IO
+(`notification:new`). Web push is not implemented (optional in the specification).
+
+**Reports** (`POST /reports`): a player can report another player from a match they both
+played; a second open report for the same player and match is not duplicated.
+
+**Admin** (`/admin` in the web app, `/api/v1/admin/*`, role `ADMIN` checked on the server for
+every route; non-admins get a 404 page). Every change requires a reason and is written to
+`admin_audit_logs` in the same transaction as the change:
+
+| Area     | What administrators can do                                                                                                                                                                                        |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview | Users, open rooms, matches, coins in circulation, timeouts, flagged matches, reports, health                                                                                                                      |
+| Users    | Search by name, email or ID; see account, matches and ledger; suspend or reactivate; revoke sessions; adjust coins (a new `ADMIN_ADJUSTMENT` ledger row, idempotent per request, never below zero); send a notice |
+| Matches  | Filter, see the full event log including the deal, flag for review, abort a running match with full refunds                                                                                                       |
+| Reports  | Review and mark resolved or dismissed (once)                                                                                                                                                                      |
+| Presets  | Add a new rule preset version (rules validated against the spec) and activate it; old versions are never edited                                                                                                   |
+| Audit    | Browse every administrative action with actor, target, reason and IP address                                                                                                                                      |
+
+Administrators cannot change finished match results or edit ledger rows. Daily reward values
+and the payout table are code constants documented in [docs/ECONOMY.md](docs/ECONOMY.md); changing
+them is a reviewed deployment, not an admin setting. The first administrator is created with
+`pnpm db:set-role <email> ADMIN`.
+
 ## Data model
 
 [`apps/server/prisma/schema.prisma`](apps/server/prisma/schema.prisma) defines all entities:
@@ -405,10 +449,9 @@ Integrity is enforced in the database, not only in application code:
   `degraded`. The Redis code path is covered by the stubbed e2e tests only.
 - Docker files were written but not executed on the verification machine, which has no Docker.
   CI runs against real PostgreSQL and Redis service containers.
-- With a real account, the lobby shows "Sắp ra mắt" for the leaderboard and notifications
-  until Phase 7, and the match history page is a placeholder.
-- Aborting a match (with refunds) exists in the server but has no administrator tool until
-  Phase 7. Administrative coin corrections arrive with it.
+- Web push notifications are not implemented (optional); the in-app center is.
+- The leaderboard is computed from the database on demand and cached per process for a
+  minute. Very large player counts would need a materialized table.
 - Quick-match queues, presence counts and turn timers live in one API process (see
   "Scaling"). A restart empties the queues; matches resume from the database.
 - Open sockets are not closed when a session is revoked. They carry no private data, and the

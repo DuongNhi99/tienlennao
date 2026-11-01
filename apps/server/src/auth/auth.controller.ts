@@ -15,6 +15,7 @@ import {
 } from '@tienlen/shared';
 import type { Request, Response } from 'express';
 import { clientInfo } from '../common/http/client-info';
+import { NotificationsService } from '../notifications/notifications.service';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { AuthService, toAuthUser } from './auth.service';
 import { CurrentUser, Public } from './decorators';
@@ -27,6 +28,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly sessions: SessionsService,
     private readonly cookie: SessionCookie,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** 201: account created and signed in. 409 EMAIL_ALREADY_EXISTS. */
@@ -75,6 +77,15 @@ export class AuthController {
   ): Promise<void> {
     await this.sessions.revokeAllForUser(user.id);
     this.cookie.clear(res);
+    await this.notifications.send([
+      {
+        userId: user.id,
+        type: 'SECURITY',
+        title: 'Đã đăng xuất mọi thiết bị',
+        body: 'Mọi phiên đăng nhập của bạn vừa được kết thúc theo yêu cầu.',
+        dedupeKey: `logout-all:${new Date().toISOString()}`,
+      },
+    ]);
   }
 
   @Get('me')

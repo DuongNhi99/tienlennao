@@ -131,4 +131,12 @@ test('a browser player plays a full match against three API clients', async ({ p
   await botsDone;
   await expect(result.getByRole('listitem')).toHaveCount(4);
   await Promise.all(bots.map((bot) => bot.dispose()));
+
+  // The match is in the history, with its public timeline, and the result was notified.
+  await page.goto('/history');
+  await page.getByRole('list', { name: 'Ván đấu' }).getByRole('link').first().click();
+  await expect(page.getByRole('heading', { name: 'Kết quả' })).toBeVisible();
+  await expect(page.getByText(/đánh bài lẻ: 3 bích/)).toBeVisible();
+  await page.goto('/notifications');
+  await expect(page.getByText(/Hạng \d\/4 tại phòng/)).toBeVisible();
 });

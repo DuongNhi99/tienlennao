@@ -35,6 +35,14 @@ export function rewardDayKey(at: Date): string {
   return new Date(at.getTime() + VIETNAM_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+/** Start of the current week (Monday 00:00 Vietnam time) containing `at`. */
+export function weekStart(at: Date): Date {
+  const local = new Date(at.getTime() + VIETNAM_OFFSET_MS);
+  const daysSinceMonday = (local.getUTCDay() + 6) % 7;
+  const midnight = Math.floor(local.getTime() / DAY_MS) * DAY_MS;
+  return new Date(midnight - daysSinceMonday * DAY_MS - VIETNAM_OFFSET_MS);
+}
+
 /** The reward day before `dayKey`. */
 export function previousRewardDay(dayKey: string): string {
   return new Date(Date.parse(`${dayKey}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10);

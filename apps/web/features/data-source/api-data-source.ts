@@ -1,9 +1,12 @@
 import {
   type ClientToServerEvents,
   currentUserSummarySchema,
+  leaderboardSchema,
+  matchHistoryDetailSchema,
+  matchHistoryPageSchema,
+  notificationPageSchema,
   dailyRewardClaimSchema,
   dailyRewardStatusSchema,
-  ERROR_MESSAGES_VI,
   matchmakingStatusSchema,
   matchResultSchema,
   playerGameViewSchema,
@@ -17,21 +20,18 @@ import {
 } from '@tienlen/shared';
 import { io, type Socket } from 'socket.io-client';
 import { z } from 'zod';
-import { ApiClientError, apiRequest, noContentSchema } from '@/lib/api/client';
+import { apiRequest, noContentSchema } from '@/lib/api/client';
 import { publicEnv } from '@/lib/env';
 import type { DataSourceEvent, GameDataSource } from './types';
 
 /**
- * The real backend. Leaderboard and notifications (Phase 7) are not served yet: those methods
- * reject with FEATURE_UNAVAILABLE so screens say "coming soon" instead of inventing data.
+ * The real backend. Every response is validated against the shared contracts.
  */
-function unavailable(): Promise<never> {
-  return Promise.reject(
-    new ApiClientError('FEATURE_UNAVAILABLE', ERROR_MESSAGES_VI.FEATURE_UNAVAILABLE, 501),
-  );
-}
 
 const roomIdResponseSchema = z.object({ roomId: z.uuid() });
+const reportResponseSchema = z.object({ reportId: z.uuid() });
+const withCursor = (path: string, cursor?: string) =>
+  cursor ? `${path}?cursor=${encodeURIComponent(cursor)}` : path;
 const room = (roomId: string) => `/rooms/${encodeURIComponent(roomId)}`;
 
 /**
@@ -59,6 +59,7 @@ function createNotifications() {
     next.on('game:updated', ({ roomId }) => emit({ type: 'game', roomId }));
     next.on('matchmaking:updated', () => emit({ type: 'matchmaking' }));
     next.on('user:updated', () => emit({ type: 'user' }));
+    next.on('notification:new', () => emit({ type: 'notifications' }));
     return next;
   }
 
@@ -151,7 +152,22 @@ export function createApiDataSource(): GameDataSource {
     cancelMatchmaking: () =>
       apiRequest('/matchmaking', { method: 'DELETE', schema: matchmakingStatusSchema }),
 
-    getLeaderboardPreview: unavailable,
+    getLeaderboardPreview: async () =>
+      (
+        await apiRequest('/leaderboard?metric=wins&period=week&limit=5', {
+          schema: leaderboardSchema,
+        })
+      ).entries,
+    getLeaderboard: ({ metric = 'wins', period = 'week', offset = 0, limit = 50 }) =>
+      apiRequest(`/leaderboard?metric=${metric}&period=${period}&offset=${offset}&limit=${limit}`, {
+        schema: leaderboardSchema,
+      }),
+    listMatchHistory: (cursor) =>
+      apiRequest(withCursor('/history', cursor), { schema: matchHistoryPageSchema }),
+    getMatchHistory: (matchId) =>
+      apiRequest(`/history/${encodeURIComponent(matchId)}`, { schema: matchHistoryDetailSchema }),
+    reportPlayer: (report) =>
+      apiRequest('/reports', { method: 'POST', body: report, schema: reportResponseSchema }),
     getWallet: () => apiRequest('/wallet', { schema: walletSummarySchema }),
     listWalletTransactions: (cursor) =>
       apiRequest(`/wallet/transactions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {
@@ -160,7 +176,16 @@ export function createApiDataSource(): GameDataSource {
     getDailyReward: () => apiRequest('/rewards/daily', { schema: dailyRewardStatusSchema }),
     claimDailyReward: () =>
       apiRequest('/rewards/daily/claim', { method: 'POST', schema: dailyRewardClaimSchema }),
-    listNotifications: unavailable,
-    markAllNotificationsRead: unavailable,
+    listNotifications: (cursor) =>
+      apiRequest(withCursor('/notifications', cursor), { schema: notificationPageSchema }),
+    markNotificationRead: async (id) => {
+      await apiRequest(`/notifications/${encodeURIComponent(id)}/read`, {
+        method: 'POST',
+        schema: noContentSchema,
+      });
+    },
+    markAllNotificationsRead: async () => {
+      await apiRequest('/notifications/read-all', { method: 'POST', schema: noContentSchema });
+    },
   };
 }

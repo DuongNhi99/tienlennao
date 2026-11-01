@@ -41,6 +41,14 @@ import {
   sortCards,
   compareCards,
   type TrickPlay,
+  type LeaderboardQuery,
+  leaderboardSchema,
+  type MatchHistoryDetail,
+  matchHistoryDetailSchema,
+  matchHistoryPageSchema,
+  notificationPageSchema,
+  rankLeaderboard,
+  WIN_RATE_MIN_MATCHES,
   type WalletTransaction,
   type WalletTransactionType,
   walletSummarySchema,
@@ -101,6 +109,7 @@ interface MockGame {
   turnSeat: number;
   turnDeadline: number;
   processedActions: Set<string>;
+  startedAt: number;
   result: MatchResult | null;
 }
 
@@ -261,6 +270,58 @@ export function createPreviewDataSource(): GameDataSource {
       createdAt: new Date().toISOString(),
     });
   }
+  const [hl, ht, hb] = BOTS as [PublicPlayer, PublicPlayer, PublicPlayer];
+  const history: MatchHistoryDetail[] = [
+    {
+      matchId: uuid(0xd00),
+      roomId: uuid(0xa00),
+      roomCode: 'K7M2QX',
+      roomName: 'Bàn vui vẻ',
+      status: 'FINISHED',
+      entryFee: 100,
+      startedAt: new Date(now - 3.2 * 3600_000).toISOString(),
+      finishedAt: new Date(now - 3 * 3600_000).toISOString(),
+      durationSeconds: 720,
+      mySeat: 0,
+      players: [
+        { ...ME, seatIndex: 0, placement: 1, cardsRemaining: 0, coinDelta: 100 },
+        { ...hl, seatIndex: 1, placement: 3, cardsRemaining: 0, coinDelta: -20 },
+        { ...ht, seatIndex: 2, placement: 2, cardsRemaining: 0, coinDelta: 20 },
+        { ...hb, seatIndex: 3, placement: 4, cardsRemaining: 5, coinDelta: -100 },
+      ],
+      timeline: (
+        [
+          ['PLAY', 0, ['3S'], 'SINGLE', null],
+          ['PLAY', 1, ['7D'], 'SINGLE', null],
+          ['PASS', 2, null, null, null],
+          ['PLAY', 3, ['2H'], 'SINGLE', null],
+          ['TRICK_RESOLVED', 3, null, null, null],
+          ['PLAYER_FINISHED', 0, null, null, 1],
+          ['MATCH_FINISHED', 0, null, null, null],
+        ] as const
+      ).map(([type, seatIndex, cards, combinationType, place], sequence) => ({
+        sequence: sequence + 1,
+        type,
+        at: new Date(now - 3.2 * 3600_000 + sequence * 60_000).toISOString(),
+        seatIndex,
+        cards: cards ? [...cards] : null,
+        combinationType,
+        choppedSeat: null,
+        place,
+      })),
+    },
+  ];
+  const leaderboardRows = (
+    [
+      [BOTS[3]!, 212, 540],
+      [BOTS[0]!, 198, 610],
+      [BOTS[5]!, 175, 402],
+      [BOTS[1]!, 160, 455],
+      [BOTS[6]!, 151, 390],
+      [BOTS[2]!, 120, 260],
+      [ME, 15, 48],
+    ] as const
+  ).map(([player, wins, played]) => ({ ...player, wins, played }));
   const matchmaking: {
     state: MatchmakingStatus['state'];
     entryFee: number | null;
@@ -272,6 +333,7 @@ export function createPreviewDataSource(): GameDataSource {
       type: 'DAILY_REWARD',
       title: 'Phần thưởng hằng ngày',
       body: 'Phần thưởng ngày 3 của chuỗi đăng nhập đã sẵn sàng.',
+      link: '/lobby',
       createdAt: new Date(now - 5 * 60_000).toISOString(),
       readAt: null,
     },
@@ -279,7 +341,8 @@ export function createPreviewDataSource(): GameDataSource {
       id: uuid(0xb02),
       type: 'MATCH_RESULT',
       title: 'Kết quả ván đấu',
-      body: 'Bạn về nhất tại phòng “Bàn vui vẻ” và nhận +300 xu.',
+      body: 'Bạn về nhất tại phòng “Bàn vui vẻ” và nhận +200 xu.',
+      link: `/history/${uuid(0xd00)}`,
       createdAt: new Date(now - 3 * 3600_000).toISOString(),
       readAt: new Date(now - 2 * 3600_000).toISOString(),
     },
@@ -288,6 +351,7 @@ export function createPreviewDataSource(): GameDataSource {
       type: 'SECURITY',
       title: 'Đăng nhập mới',
       body: 'Tài khoản của bạn vừa đăng nhập trên một thiết bị mới.',
+      link: null,
       createdAt: new Date(now - 26 * 3600_000).toISOString(),
       readAt: new Date(now - 25 * 3600_000).toISOString(),
     },
@@ -412,6 +476,7 @@ export function createPreviewDataSource(): GameDataSource {
       turnSeat: hands.findIndex((hand) => hand.includes('3S')),
       turnDeadline: 0,
       processedActions: new Set(),
+      startedAt: Date.now(),
       result: null,
     };
     if (players.some((p) => p.userId === ME.userId)) {
@@ -527,6 +592,28 @@ export function createPreviewDataSource(): GameDataSource {
     game.status = 'FINISHED';
     game.stateVersion++;
     game.result = matchResultSchema.parse({ matchId: game.matchId, placements });
+    if (mySeatInGame(game) !== -1) {
+      history.unshift({
+        matchId: game.matchId,
+        roomId: room.id,
+        roomCode: room.code,
+        roomName: room.name,
+        status: 'FINISHED',
+        entryFee: room.entryFee,
+        startedAt: new Date(game.startedAt).toISOString(),
+        finishedAt: new Date().toISOString(),
+        durationSeconds: Math.round((Date.now() - game.startedAt) / 1000),
+        mySeat: mySeatInGame(game),
+        players: placements.map(({ placement, cardsRemaining, coinDelta, ...player }) => ({
+          ...player,
+          placement,
+          cardsRemaining,
+          coinDelta,
+        })),
+        // The preview does not record moves; the real server keeps the full public timeline.
+        timeline: [],
+      });
+    }
     room.status = 'FINISHED';
 
     const mine = placements.find((p) => p.userId === ME.userId);
@@ -826,17 +913,59 @@ export function createPreviewDataSource(): GameDataSource {
     },
 
     async getLeaderboardPreview() {
+      return (await this.getLeaderboard({ metric: 'wins', period: 'week', limit: 5 })).entries;
+    },
+
+    async getLeaderboard({
+      metric = 'wins',
+      period = 'week',
+      offset = 0,
+      limit = 50,
+    }: LeaderboardQuery) {
       await delay(LATENCY_MS);
-      const rows = [
-        [BOTS[3]!, 212, 540],
-        [BOTS[0]!, 198, 610],
-        [BOTS[5]!, 175, 402],
-        [BOTS[1]!, 160, 455],
-        [BOTS[6]!, 151, 390],
-      ] as const;
-      return rows.map(([player, wins, matchesPlayed], i) =>
-        leaderboardEntrySchema.parse({ ...player, rank: i + 1, wins, matchesPlayed }),
+      const minMatches = metric === 'winRate' ? WIN_RATE_MIN_MATCHES[period] : 0;
+      const ranked = rankLeaderboard(leaderboardRows, metric, minMatches).map((row) =>
+        leaderboardEntrySchema.parse({
+          ...leaderboardRows.find((r) => r.userId === row.userId)!,
+          rank: row.rank,
+          matchesPlayed: row.played,
+          winRate: row.winRate,
+        }),
       );
+      return leaderboardSchema.parse({
+        metric,
+        period,
+        since: period === 'week' ? new Date(now - 3 * 86_400_000).toISOString() : null,
+        minMatches,
+        entries: ranked.slice(offset, offset + limit),
+        total: ranked.length,
+        me: ranked.find((e) => e.userId === ME.userId) ?? null,
+        generatedAt: new Date().toISOString(),
+      });
+    },
+
+    async listMatchHistory(cursor?: string) {
+      await delay(LATENCY_MS);
+      const start = cursor ? history.findIndex((m) => m.matchId === cursor) + 1 : 0;
+      const items = history
+        .slice(start, start + 20)
+        .map(({ timeline: _timeline, ...item }) => item);
+      return matchHistoryPageSchema.parse({
+        items,
+        nextCursor: start + 20 < history.length ? items.at(-1)!.matchId : null,
+      });
+    },
+
+    async getMatchHistory(matchId: string) {
+      await delay(LATENCY_MS);
+      const match = history.find((m) => m.matchId === matchId);
+      if (!match) throw new ApiError('NOT_FOUND', 404);
+      return matchHistoryDetailSchema.parse(match);
+    },
+
+    async reportPlayer() {
+      await delay(LATENCY_MS);
+      return { reportId: crypto.randomUUID() };
     },
 
     async getDailyReward() {
@@ -880,7 +1009,19 @@ export function createPreviewDataSource(): GameDataSource {
 
     async listNotifications() {
       await delay(LATENCY_MS);
-      return notifications.map((n) => notificationItemSchema.parse(n));
+      return notificationPageSchema.parse({
+        items: notifications.map((n) => notificationItemSchema.parse(n)),
+        nextCursor: null,
+        unreadCount: notifications.filter((n) => n.readAt === null).length,
+      });
+    },
+
+    async markNotificationRead(id: string) {
+      await delay(LATENCY_MS);
+      const item = notifications.find((n) => n.id === id);
+      if (!item) throw new ApiError('NOT_FOUND', 404);
+      item.readAt ??= new Date().toISOString();
+      emit({ type: 'notifications' });
     },
 
     async markAllNotificationsRead() {

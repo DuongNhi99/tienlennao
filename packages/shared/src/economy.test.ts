@@ -6,6 +6,7 @@ import {
   nextStreakDay,
   previousRewardDay,
   rewardDayKey,
+  weekStart,
 } from './economy';
 
 describe('calculatePayouts', () => {
@@ -44,6 +45,19 @@ describe('reward days (Asia/Ho_Chi_Minh, UTC+7)', () => {
   it('finds the previous day across month and year boundaries', () => {
     expect(previousRewardDay('2026-03-01')).toBe('2026-02-28');
     expect(previousRewardDay('2027-01-01')).toBe('2026-12-31');
+  });
+});
+
+describe('weekStart', () => {
+  it('returns Monday 00:00 in Vietnam time', () => {
+    // Sunday 2026-11-01 23:30 in Vietnam → the week began Monday 2026-10-26.
+    expect(weekStart(new Date('2026-11-01T16:30:00Z')).toISOString()).toBe(
+      '2026-10-25T17:00:00.000Z',
+    );
+    // Monday 2026-11-02 00:00 in Vietnam starts a new week.
+    expect(weekStart(new Date('2026-11-01T17:00:00Z')).toISOString()).toBe(
+      '2026-11-01T17:00:00.000Z',
+    );
   });
 });
 

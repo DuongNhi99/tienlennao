@@ -1,13 +1,18 @@
 import type {
   CardId,
+  CreateReportRequest,
   CreateRoomRequest,
   CurrentUserSummary,
   DailyRewardStatus,
   JoinRoomByCodeRequest,
+  Leaderboard,
   LeaderboardEntry,
+  LeaderboardQuery,
+  MatchHistoryDetail,
+  MatchHistoryPage,
   MatchmakingStatus,
   MatchResult,
-  NotificationItem,
+  NotificationPage,
   PlayerGameView,
   RoomDetail,
   RoomListFilter,
@@ -72,12 +77,19 @@ export interface GameDataSource {
   joinMatchmaking(entryFee: number): Promise<MatchmakingStatus>;
   cancelMatchmaking(): Promise<MatchmakingStatus>;
 
+  /** Top 5 by weekly wins, for the lobby. */
   getLeaderboardPreview(): Promise<LeaderboardEntry[]>;
+  getLeaderboard(query: LeaderboardQuery): Promise<Leaderboard>;
+  listMatchHistory(cursor?: string): Promise<MatchHistoryPage>;
+  getMatchHistory(matchId: string): Promise<MatchHistoryDetail>;
+  reportPlayer(report: CreateReportRequest): Promise<{ reportId: string }>;
   getWallet(): Promise<WalletSummary>;
   /** Newest first; pass the previous page's `nextCursor` for older entries. */
   listWalletTransactions(cursor?: string): Promise<WalletTransactionPage>;
   getDailyReward(): Promise<DailyRewardStatus>;
   claimDailyReward(): Promise<{ amount: number; balance: number }>;
-  listNotifications(): Promise<NotificationItem[]>;
+  /** Newest first, with the unread count; pass `nextCursor` for older ones. */
+  listNotifications(cursor?: string): Promise<NotificationPage>;
+  markNotificationRead(id: string): Promise<void>;
   markAllNotificationsRead(): Promise<void>;
 }

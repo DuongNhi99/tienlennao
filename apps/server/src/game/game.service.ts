@@ -36,6 +36,7 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { playerSelect, RoomsService } from '../rooms/rooms.service';
 import { LedgerService } from '../wallet/ledger.service';
 import { RewardsService } from '../wallet/rewards.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { Dealer } from './dealer';
 import { RulePresetsService } from './rule-presets.service';
 
@@ -108,6 +109,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     private readonly dealer: Dealer,
     private readonly ledger: LedgerService,
     private readonly rewards: RewardsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -462,7 +464,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     assertTransition(ROOM_TRANSITIONS, 'IN_PROGRESS', 'FINISHED');
     const match = await tx.match.findUniqueOrThrow({
       where: { id: matchId },
-      select: { entryFee: true, settledAt: true },
+      select: { entryFee: true, settledAt: true, room: { select: { code: true } } },
     });
     if (match.settledAt) throw new Error(`Match ${matchId} is already settled`);
     const outcome = calculateMatchResult(state);
@@ -507,6 +509,21 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       data: { matchesWon: { increment: 1 } },
     });
     for (const { userId } of players) await this.rewards.unlockAchievements(tx, userId);
+    await this.notifications.create(
+      tx,
+      outcome.placements.map((placement) => {
+        const coinDelta = payouts[placement.placement - 1]! - match.entryFee;
+        const coins = match.entryFee > 0 ? ` · ${coinDelta > 0 ? '+' : ''}${coinDelta} xu` : '';
+        return {
+          userId: userAt(placement.seat),
+          type: 'MATCH_RESULT' as const,
+          title: placement.placement === 1 ? 'Bạn đã về nhất!' : 'Kết quả ván đấu',
+          body: `Hạng ${placement.placement}/4 tại phòng ${match.room.code}${coins}.`,
+          link: `/history/${matchId}`,
+          dedupeKey: `match:${matchId}`,
+        };
+      }),
+    );
     await tx.roomPlayer.deleteMany({ where: { roomId } });
     await tx.room.update({ where: { id: roomId }, data: { status: 'FINISHED', closedAt: now } });
   }
@@ -549,6 +566,33 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
         where: { id: matchId },
         data: { status: 'ABORTED', abortReason: reason, finishedAt: new Date() },
       });
+      const last = await tx.matchEvent.aggregate({
+        where: { matchId },
+        _max: { sequence: true },
+      });
+      await tx.matchEvent.create({
+        data: {
+          matchId,
+          sequence: (last._max.sequence ?? -1) + 1,
+          type: 'MATCH_ABORTED',
+          // The reason is for administrators; players only see that the match was cancelled.
+          payload: { refunded: match.entryFee > 0 },
+        },
+      });
+      await this.notifications.create(
+        tx,
+        match.players.map(({ userId }) => ({
+          userId,
+          type: 'MATCH_RESULT' as const,
+          title: 'Ván đấu đã bị hủy',
+          body:
+            match.entryFee > 0
+              ? `Ván tại phòng ${match.room.code} đã bị hủy. Phí vào bàn đã được hoàn lại.`
+              : `Ván tại phòng ${match.room.code} đã bị hủy.`,
+          link: `/history/${matchId}`,
+          dedupeKey: `match:${matchId}`,
+        })),
+      );
       if (match.room.status === 'IN_PROGRESS') {
         assertTransition(ROOM_TRANSITIONS, 'IN_PROGRESS', 'CANCELLED');
         await tx.roomPlayer.deleteMany({ where: { roomId: match.roomId } });
@@ -584,6 +628,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     }
     // Balances changed: fees at the start of a paid match, payouts and statistics at the end.
     if (finished || roomChanged) this.realtime.userUpdated(playerIds);
+    if (finished) this.notifications.announce(playerIds);
   }
 
   private schedule(matchId: string, version: number, deadline: Date): void {

@@ -15,6 +15,7 @@ import { passwordResetEmail, verificationEmail } from '../mail/templates';
 import { PrismaService } from '../prisma/prisma.service';
 import { type RateLimitRule, RateLimitService } from '../rate-limit/rate-limit.service';
 import { WalletService } from '../wallet/wallet.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { EmailTokensService } from './email-tokens.service';
 import { PasswordService } from './password.service';
 import { type SessionUser, SessionsService } from './sessions.service';
@@ -74,6 +75,7 @@ export class AuthService {
     private readonly rateLimit: RateLimitService,
     private readonly mail: MailService,
     private readonly wallet: WalletService,
+    private readonly notifications: NotificationsService,
     config: ConfigService<Env, true>,
   ) {
     this.webUrl =
@@ -175,6 +177,15 @@ export class AuthService {
         where: { userId: id, revokedAt: null },
         data: { revokedAt: now },
       });
+      await this.notifications.create(tx, [
+        {
+          userId: id,
+          type: 'SECURITY',
+          title: 'Mật khẩu đã được đặt lại',
+          body: 'Mật khẩu của bạn vừa được đổi và mọi thiết bị đã bị đăng xuất. Nếu không phải bạn, hãy đặt lại mật khẩu ngay.',
+          dedupeKey: `password-reset:${now.toISOString()}`,
+        },
+      ]);
       return id;
     });
     if (!userId) throw new AppException('INVALID_TOKEN', HttpStatus.BAD_REQUEST);

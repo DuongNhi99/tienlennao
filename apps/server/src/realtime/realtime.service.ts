@@ -44,4 +44,8 @@ export class RealtimeService {
   userUpdated(userIds: readonly string[]): void {
     if (userIds.length) this.server?.to(userIds.map(userChannel)).emit('user:updated', {});
   }
+
+  notificationCreated(userIds: readonly string[]): void {
+    if (userIds.length) this.server?.to(userIds.map(userChannel)).emit('notification:new', {});
+  }
 }

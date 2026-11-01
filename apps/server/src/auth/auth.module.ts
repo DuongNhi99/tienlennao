@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { AdminUsersController } from '../admin/admin-users.controller';
 import { MailService } from '../mail/mail.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { RateLimitModule } from '../rate-limit/rate-limit.module';
 import { AvatarStorageService } from '../users/avatar-storage.service';
 import { AvatarsController, UsersController } from '../users/users.controller';
@@ -20,8 +20,8 @@ import { SessionsService } from './sessions.service';
  * global and run in order: Origin (CSRF) → Auth (session) → Roles.
  */
 @Module({
-  imports: [RateLimitModule, WalletModule],
-  controllers: [AuthController, UsersController, AvatarsController, AdminUsersController],
+  imports: [RateLimitModule, WalletModule, NotificationsModule],
+  controllers: [AuthController, UsersController, AvatarsController],
   providers: [
     AuthService,
     PasswordService,

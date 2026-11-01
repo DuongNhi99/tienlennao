@@ -1,7 +1,8 @@
 'use client';
 
 import { useMutation } from '@tanstack/react-query';
-import { LogOut, MailWarning } from 'lucide-react';
+import { LogOut, MailWarning, ShieldCheck } from 'lucide-react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { errorMessage } from '@/lib/api/client';
 import { navigateAfterSessionChange } from '@/lib/session-navigation';
@@ -30,6 +31,21 @@ export function LogoutButton() {
     >
       <LogOut aria-hidden className="size-5" />
     </button>
+  );
+}
+
+/** Shortcut to the admin area, for administrators only (the server checks the role again). */
+export function AdminLink() {
+  const user = useSessionUser();
+  if (user?.role !== 'ADMIN') return null;
+  return (
+    <Link
+      href="/admin"
+      aria-label="Quản trị"
+      className="grid size-11 place-items-center rounded-lg text-white/80 hover:bg-white/10 hover:text-white"
+    >
+      <ShieldCheck aria-hidden className="size-5" />
+    </Link>
   );
 }
 

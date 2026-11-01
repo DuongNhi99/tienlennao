@@ -44,6 +44,9 @@ function EventBridge({ source }: { source: GameDataSource }) {
             void queryClient.invalidateQueries({ queryKey: queryKeys.currentUser });
             void queryClient.invalidateQueries({ queryKey: queryKeys.wallet });
             void queryClient.invalidateQueries({ queryKey: queryKeys.walletTransactions });
+            // Finished matches change the history and the rankings too.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.history });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.leaderboardPreview });
             break;
           case 'rooms':
             void queryClient.invalidateQueries({ queryKey: queryKeys.rooms() });

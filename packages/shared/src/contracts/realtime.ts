@@ -49,6 +49,8 @@ export interface ServerToClientEvents {
   'matchmaking:updated': (event: MatchmakingUpdatedEvent) => void;
   /** Your profile or statistics changed (for example after a match). */
   'user:updated': (event: EmptyEvent) => void;
+  /** You have a new in-app notification. */
+  'notification:new': (event: EmptyEvent) => void;
 }
 
 /** No client→server events: commands use REST. */

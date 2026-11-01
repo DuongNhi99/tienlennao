@@ -142,7 +142,34 @@ being set up could leave the player marked as connected. Connections are now cou
 any asynchronous work, and seat updates for one user run in order and record the current
 presence (the multiplayer and wallet tests passed three times in a row afterwards).
 
-## Phase 7 — History, leaderboard, admin ⏳
+## Phase 7 — History, leaderboard, admin ✅
+
+Integration tests: `test/integration/history-admin.test.ts` (13 tests). Browser tests:
+`e2e/history.spec.ts` (preview), `e2e-auth/admin.spec.ts` and the history and notification
+steps of `e2e-auth/multiplayer.spec.ts` (real stack). Results: `pnpm check` passed (170 shared,
+27 server, 30 web unit tests); `pnpm test:integration` 73/73; real-stack browser suite 10/10;
+preview browser suite 54/54.
+
+Fix made while verifying Phase 7: the web ESLint config now sets `tsconfigRootDir`. Without it
+the VS Code ESLint extension, which loads every package config in one process, could not tell
+which TypeScript project a web file belongs to and reported a parsing error on every file.
+
+| Item                                | Status | Evidence                                                                                          |
+| ----------------------------------- | ------ | ------------------------------------------------------------------------------------------------- |
+| Match history (list, detail, pages) | ✅     | Own matches only (others get 404); coinDelta equals the ledger; timeline without the deal         |
+| Leaderboards                        | ✅     | Weekly/all-time wins, win rate (minimum matches), played; written tie-breaks; unit-tested ranking |
+| Exclusions                          | ✅     | Aborted matches and suspended or deleted accounts never count                                     |
+| Notification center                 | ✅     | Results, cancellations, daily reminder, security, admin notices; read/read-all; de-duplicated     |
+| Player reports                      | ✅     | From a shared match only; repeated open reports are not duplicated                                |
+| Admin overview                      | ✅     | Users, rooms, matches, coins in circulation, incidents, dependency health                         |
+| Admin user management               | ✅     | Search, detail, matches, ledger, suspend/reactivate, revoke sessions, notices                     |
+| Audited coin adjustments            | ✅     | New ledger row with reason and actor; idempotent; cannot go below zero                            |
+| Match investigation                 | ✅     | Full event log (with the deal), flag for review, abort with refunds                               |
+| Report review                       | ✅     | Resolve or dismiss once                                                                           |
+| Rule preset versions                | ✅     | New versions only, validated against the rules schema, activation switches presets                |
+| Audit log                           | ✅     | Every admin action with actor, target, reason and IP, in the same transaction                     |
+| Web push notifications              | ⏳     | Optional in the specification; not implemented                                                    |
+| Reward tables as admin settings     | ⏳     | Kept as reviewed code constants (docs/ECONOMY.md), by decision                                    |
 
 ## Phase 8 — Quality and deployment ⏳
 
@@ -173,5 +200,7 @@ backup documentation.
 - **Economy:** fees are charged at match start (not reserved at join); payouts 50/30/20/0 % of
   the whole pool, remainders to 1st place; penalties and chops move no coins; aborted matches
   refund in full.
+- **Admin:** non-admins see a 404 for /admin; every admin change is audited in the same
+  transaction; no ledger row or finished result is ever edited.
 - **Boot without dependencies:** the API starts even if PostgreSQL or Redis are down, and
   readiness reports 503 so orchestrators withhold traffic.

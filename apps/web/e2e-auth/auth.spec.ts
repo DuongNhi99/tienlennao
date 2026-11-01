@@ -38,8 +38,9 @@ test('register: signed in with the starting balance and a verification reminder'
   await expect(page.getByText('Xin chào, Người Thử!')).toBeVisible();
   await expect(page.getByRole('link', { name: /^Ví xu: / })).toContainText('10.000');
   await expect(page.getByText(`Email ${email} chưa được xác minh.`)).toBeVisible();
-  // Rewards and rankings arrive in later phases: an honest "coming soon", never mock data.
-  await expect(page.getByText('Sắp ra mắt').first()).toBeVisible();
+  // Real panels from the API (no mock data): the daily reward and the weekly ranking.
+  await expect(page.getByRole('button', { name: 'Nhận 100 xu' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Bảng xếp hạng tuần' })).toBeVisible();
   await expect(page.getByText(/Bản xem trước giao diện/)).toHaveCount(0);
 
   // A signed-in user who opens the login page goes back to the lobby.
