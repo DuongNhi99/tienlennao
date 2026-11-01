@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import type { Env } from './config/env';
+import { SocketIoAdapter } from './realtime/socket-io.adapter';
 
 /** Applies global HTTP configuration. Shared by main.ts and the e2e tests. */
 export function configureApp(app: INestApplication): void {
@@ -27,6 +28,7 @@ export function configureApp(app: INestApplication): void {
     exposedHeaders: [REQUEST_ID_HEADER],
   });
   app.setGlobalPrefix(API_PREFIX);
+  app.useWebSocketAdapter(new SocketIoAdapter(app, config.get('WEB_ORIGIN', { infer: true })));
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableShutdownHooks();
 }

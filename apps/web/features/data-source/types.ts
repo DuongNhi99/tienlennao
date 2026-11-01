@@ -16,8 +16,9 @@ import type {
 } from '@tienlen/shared';
 
 /**
- * Server-push notifications. In production these map to Socket.IO events (Phase 5); the UI only
- * uses them to refetch authoritative state, never as a source of truth themselves.
+ * Server-push notifications (Socket.IO in production). The UI only uses them to refetch
+ * authoritative state, never as a source of truth themselves. `resync` follows a reconnect:
+ * anything may have changed while offline, so everything is refetched.
  */
 export type DataSourceEvent =
   | { type: 'user' }
@@ -25,7 +26,8 @@ export type DataSourceEvent =
   | { type: 'room'; roomId: string }
   | { type: 'game'; roomId: string }
   | { type: 'matchmaking' }
-  | { type: 'notifications' };
+  | { type: 'notifications' }
+  | { type: 'resync' };
 
 export interface GameAction {
   roomId: string;

@@ -4,6 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type CardId,
   type CardSortMode,
+  classifyCombination,
+  DEFAULT_GAME_RULES,
+  describeCombination,
   type GameSeat,
   PLAYERS_PER_MATCH,
   type RoomDetail,
@@ -111,6 +114,16 @@ export function GameScreen({ room }: { room: RoomDetail }) {
   const isMyTurn = view.turnSeat === view.mySeat;
   const busy = play.isPending || pass.isPending;
   const me = view.seats[view.mySeat]!;
+  // Whether the cards form a combination does not depend on configurable rules, so this hint
+  // never contradicts the server. Whether they beat the table is left to the server.
+  const combination = selected.size ? classifyCombination([...selected], DEFAULT_GAME_RULES) : null;
+  const selectionHint = me.hasPassed
+    ? 'Bạn đã bỏ lượt vòng này'
+    : selected.size === 0
+      ? '0 lá đã chọn'
+      : combination
+        ? `${describeCombination(combination)} · ${selected.size} lá`
+        : 'Không phải bộ hợp lệ';
 
   const toggle = (card: CardId) => {
     const next = new Set(selected);
@@ -170,8 +183,8 @@ export function GameScreen({ room }: { room: RoomDetail }) {
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <p className="hidden text-sm text-white/70 sm:block">
-                {me.hasPassed ? 'Bạn đã bỏ lượt vòng này' : `${selected.size} lá đã chọn`}
+              <p className="hidden text-sm text-white/70 sm:block" aria-live="polite">
+                {selectionHint}
               </p>
               <div className="ml-auto flex flex-1 justify-end gap-2 sm:flex-none">
                 <Button
@@ -203,7 +216,7 @@ export function GameScreen({ room }: { room: RoomDetail }) {
                   Bỏ lượt
                 </Button>
                 <Button
-                  disabled={!isMyTurn || selected.size === 0 || busy}
+                  disabled={!isMyTurn || !combination || busy}
                   loading={play.isPending}
                   onClick={() => play.mutate(sortCards([...selected]))}
                   className="min-w-24"

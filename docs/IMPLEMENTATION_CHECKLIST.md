@@ -70,25 +70,46 @@ Rule specification: [GAME_RULES.md](GAME_RULES.md). Engine: `packages/shared/src
 `pnpm --filter @tienlen/shared test`: 12 files, 158 tests, all passed (including the Phase 1–3
 shared tests).
 
-| Item                                  | Status | Evidence                                                                                        |
-| ------------------------------------- | ------ | ----------------------------------------------------------------------------------------------- |
-| Written rule specification            | ✅     | `docs/GAME_RULES.md` (spec v2): every regional variant decided; configurable ones listed        |
-| Rule presets                          | ✅     | `gameRulesSchema`, `DEFAULT_GAME_RULES`; seed stores preset `default` v2, v1 draft deactivated  |
-| Deck, secure shuffle, deal            | ✅     | `deck.test.ts`: 52 unique cards, 13 each, nothing lost, CSPRNG with rejection sampling          |
-| Combination classification            | ✅     | `combinations.test.ts`: every 2- and 3-card selection checked against an independent rule       |
-| Comparison and bombs                  | ✅     | Same-shape comparison, bomb table, each bomb power toggled off; Ace/2 straight edge cases       |
-| Turn state machine                    | ✅     | `engine.test.ts`: opening card, turn order, pass lockout, trick resolution, lead after finish   |
-| Instant wins, leftover penalties      | ✅     | `hand-analysis.test.ts`; priority and tie-break between players in `engine.test.ts`             |
-| Timeout action                        | ✅     | Pass if possible, otherwise the weakest single (satisfies the 3♠ opening rule)                  |
-| Match resolution                      | ✅     | Placements for both end conditions and instant wins; penalties only for unfinished hands        |
-| Whole-match simulation                | ✅     | `simulation.test.ts`: 900 seeded random matches, invariants checked after every action          |
-| Turn deadlines, idempotency, versions | ⏳     | Server responsibilities in Phase 5; the engine supplies `version` and `applyTimeout`            |
-| Client-side feedback with the engine  | ⏳     | Phase 5, when the game screen talks to the real server (the preview mock still uses stub rules) |
+| Item                                  | Status | Evidence                                                                                       |
+| ------------------------------------- | ------ | ---------------------------------------------------------------------------------------------- |
+| Written rule specification            | ✅     | `docs/GAME_RULES.md` (spec v2): every regional variant decided; configurable ones listed       |
+| Rule presets                          | ✅     | `gameRulesSchema`, `DEFAULT_GAME_RULES`; seed stores preset `default` v2, v1 draft deactivated |
+| Deck, secure shuffle, deal            | ✅     | `deck.test.ts`: 52 unique cards, 13 each, nothing lost, CSPRNG with rejection sampling         |
+| Combination classification            | ✅     | `combinations.test.ts`: every 2- and 3-card selection checked against an independent rule      |
+| Comparison and bombs                  | ✅     | Same-shape comparison, bomb table, each bomb power toggled off; Ace/2 straight edge cases      |
+| Turn state machine                    | ✅     | `engine.test.ts`: opening card, turn order, pass lockout, trick resolution, lead after finish  |
+| Instant wins, leftover penalties      | ✅     | `hand-analysis.test.ts`; priority and tie-break between players in `engine.test.ts`            |
+| Timeout action                        | ✅     | Pass if possible, otherwise the weakest single (satisfies the 3♠ opening rule)                 |
+| Match resolution                      | ✅     | Placements for both end conditions and instant wins; penalties only for unfinished hands       |
+| Whole-match simulation                | ✅     | `simulation.test.ts`: 900 seeded random matches, invariants checked after every action         |
+| Turn deadlines, idempotency, versions | ✅     | Done on the server in Phase 5 (see below)                                                      |
+| Client-side feedback with the engine  | ✅     | Phase 5: the game screen labels the selection and disables "Đánh" for a non-combination        |
 
-## Phase 5 — Multiplayer and rooms ⏳
+## Phase 5 — Multiplayer and rooms ✅
 
-Rooms, matchmaking, Socket.IO contract in `@tienlen/shared`, authoritative actions,
-idempotent action IDs, state versions, reconnect, per-player snapshots.
+`pnpm test:integration`: 4 files, 50 tests, all passed. The 15 multiplayer tests
+(`test/integration/multiplayer.test.ts`) drive four independent HTTP + Socket.IO clients
+against PostgreSQL. The browser test `apps/web/e2e-auth/multiplayer.spec.ts` plays a full
+match from the UI against three API clients. Browser suites: real stack 8/8 passed; preview 45 tests, of which 4
+tablet tests timed out under machine load on the first run and passed (14/14) on a rerun.
+
+| Item                                   | Status | Evidence                                                                                          |
+| -------------------------------------- | ------ | ------------------------------------------------------------------------------------------------- |
+| Create, list, join (ID or code), leave | ✅     | Idempotent create per `requestId`; one seat per user; host hand-over; empty room → CANCELLED      |
+| Private rooms                          | ✅     | Argon2 room password; hidden from the list; detail forbidden to outsiders                         |
+| Waiting room: ready, settings, start   | ✅     | WAITING ⇄ READY by shared transitions; host-only settings reset readiness; host-only start        |
+| Quick match                            | ✅     | Per-fee queue; four players → ready public room, match started; cancel; leaves queue on join      |
+| Socket.IO contract                     | ✅     | `contracts/realtime.ts`; cookie-authenticated handshake; foreign origins refused                  |
+| Authoritative actions                  | ✅     | Row lock per match; membership, turn, ownership, combination checked; engine decides legality     |
+| Idempotent action IDs, state versions  | ✅     | Retried `actionId` applied once; stale version → `STALE_STATE`                                    |
+| Player-specific views                  | ✅     | Each view holds only the caller's hand; tests scan every view and notification for card IDs       |
+| Turn deadlines and timeouts            | ✅     | Server-owned deadline in the snapshot; timeout action applied once; timers rebuilt at boot        |
+| Disconnect and reconnect               | ✅     | Connected flag on seats; waiting-room seat freed after the grace period; reconnect resyncs        |
+| Match end                              | ✅     | Placements, statistics, gap-free event log; room FINISHED and seats freed; instant win at start   |
+| Room cleanup                           | ✅     | Idle rooms expire (`ROOM_IDLE_MINUTES`)                                                           |
+| Web client                             | ✅     | Real API data source and socket notifications; selection label and Play disabled for non-combos   |
+| Paid rooms                             | ⏳     | Offered from Phase 6, when entry fees are charged and settled (the server offers only free rooms) |
+| Multi-instance realtime                | ⏳     | Queues, presence and timers are per process; Redis adapter and shared queue in Phase 8            |
 
 ## Phase 6 — Wallet and rewards ⏳
 
@@ -119,5 +140,9 @@ backup documentation.
   out of the trick; play continues until three players finish; no out-of-turn chops; no
   final-play restrictions; no "cóng". Chops are recorded but carry no points until Phase 6
   decides the settlement policy.
+- **Realtime:** commands are REST (status codes, CSRF origin check, rate limits, idempotency);
+  Socket.IO only notifies, never carries private data, and clients refetch their own view.
+- **Disconnects:** a disconnected player keeps their match seat and is played by the timeout
+  action; nobody wins or loses coins because of a disconnect.
 - **Boot without dependencies:** the API starts even if PostgreSQL or Redis are down, and
   readiness reports 503 so orchestrators withhold traffic.

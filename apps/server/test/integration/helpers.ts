@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { SESSION_COOKIE_NAME } from '@tienlen/shared';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
@@ -43,12 +43,16 @@ export interface TestContext {
   mail: MailCapture;
 }
 
-export async function createTestApp(): Promise<TestContext> {
+/** `override` can replace further providers, e.g. the dealer for known deals. */
+export async function createTestApp(
+  override: (builder: TestingModuleBuilder) => TestingModuleBuilder = (builder) => builder,
+): Promise<TestContext> {
   const mail = new MailCapture();
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(MailService)
-    .useValue(mail)
-    .compile();
+  const moduleRef = await override(
+    Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(MailService)
+      .useValue(mail),
+  ).compile();
   const app = moduleRef.createNestApplication({ bufferLogs: true });
   configureApp(app);
   await app.init();

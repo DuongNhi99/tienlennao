@@ -61,6 +61,19 @@ export const envSchema = z.object({
     .optional(),
   /** Where re-encoded avatar images are stored. Must be shared storage when scaled out. */
   UPLOAD_DIR: z.string().min(1).default('.local/uploads'),
+
+  /** A room that has not started expires after this many minutes without activity. */
+  ROOM_IDLE_MINUTES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 60)
+    .default(30),
+  /**
+   * A player whose last connection dropped while in a waiting room loses the seat after this
+   * many seconds. During a match, disconnected players keep their seat and time out normally.
+   */
+  RECONNECT_GRACE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -67,3 +67,30 @@ export const joinRoomByCodeRequestSchema = z.object({
   password: optionalRoomPassword,
 });
 export type JoinRoomByCodeRequest = z.infer<typeof joinRoomByCodeRequestSchema>;
+
+export const joinRoomRequestSchema = z.object({ password: optionalRoomPassword });
+export type JoinRoomRequest = z.infer<typeof joinRoomRequestSchema>;
+
+export const setReadyRequestSchema = z.object({ ready: z.boolean() });
+export type SetReadyRequest = z.infer<typeof setReadyRequestSchema>;
+
+/** Host-only. As with creation, the values must be allowed by the active rule preset. */
+export const updateRoomSettingsRequestSchema = z.object({
+  entryFee: z.number().int().nonnegative(),
+  turnTimerSeconds: z.number().int().positive(),
+});
+export type UpdateRoomSettingsRequest = z.infer<typeof updateRoomSettingsRequestSchema>;
+
+/** Query string for GET /rooms (values arrive as strings). */
+export const roomListQuerySchema = z.object({
+  maxEntryFee: z.coerce.number().int().nonnegative().optional(),
+  onlyWithSeats: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true'),
+});
+
+export const joinMatchmakingRequestSchema = z.object({
+  entryFee: z.number().int().nonnegative(),
+});
+export type JoinMatchmakingRequest = z.infer<typeof joinMatchmakingRequestSchema>;

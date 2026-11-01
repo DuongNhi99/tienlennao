@@ -7,7 +7,8 @@ responsive, installable **Next.js PWA** with a **NestJS** backend.
 > or real-world prize redemption. Adding any of these requires a separate legal, compliance,
 > and security review first.
 
-**Status:** Phases 1–4 (foundation, UI and PWA, accounts, game engine) are complete. See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
+**Status:** Phases 1–5 (foundation, UI and PWA, accounts, game engine, multiplayer) are
+complete. See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
 
 ---
 
@@ -17,9 +18,9 @@ responsive, installable **Next.js PWA** with a **NestJS** backend.
 .
 ├── apps/
 │   ├── web/            Next.js 16 (App Router) + React 19 + Tailwind CSS 4 — the PWA client
-│   └── server/         NestJS 11 — REST API (/api/v1), Socket.IO gateway (Phase 5)
+│   └── server/         NestJS 11 — REST API and Socket.IO notifications, both under /api/v1
 │       ├── prisma/     Prisma schema, migrations, seed (PostgreSQL)
-│       └── src/        config · common · prisma · redis · health · (feature modules per phase)
+│       └── src/        config · common · auth · users · rooms · game · matchmaking · realtime
 ├── packages/
 │   └── shared/         Zod schemas, error codes, lifecycle state machines, constants and
 │                       the game engine, shared by web and server (CommonJS in dist/)
@@ -94,27 +95,29 @@ All variables live in one root `.env` (see [.env.example](.env.example)). The se
 its environment with Zod at startup and refuses to boot when it is invalid. The error lists
 variable names, never their values.
 
-| Variable                 | Used by        | Required | Default                        | Notes                                        |
-| ------------------------ | -------------- | -------- | ------------------------------ | -------------------------------------------- |
-| `DATABASE_URL`           | server, Prisma | yes      | —                              | `postgresql://…`                             |
-| `REDIS_URL`              | server         | no       | `redis://localhost:6379`       | `redis://` or `rediss://`                    |
-| `PORT`                   | server         | no       | `4000`                         |                                              |
-| `WEB_ORIGIN`             | server         | no       | `http://localhost:3000`        | Comma-separated CORS allow-list (http/https) |
-| `LOG_LEVEL`              | server         | no       | `info`                         | `silent` … `trace`                           |
-| `NEXT_PUBLIC_API_URL`    | web (browser)  | no       | `http://localhost:4000/api/v1` | Inlined at build time                        |
-| `API_INTERNAL_URL`       | web (server)   | no       | `NEXT_PUBLIC_API_URL`          | API base URL from inside the network         |
-| `NEXT_PUBLIC_UI_PREVIEW` | web (build)    | no       | `false`                        | Mock data on signed-in screens; never deploy |
-| `POSTGRES_*`             | docker compose | no       | see `.env.example`             | Must match `DATABASE_URL`                    |
-| `TRUST_PROXY`            | server         | no       | `0`                            | Reverse proxies whose X-Forwarded-For counts |
-| `WEB_APP_URL`            | server         | no       | first `WEB_ORIGIN`             | Base of links in emails                      |
-| `API_PUBLIC_URL`         | server         | no       | `http://localhost:PORT/api/v1` | Base of avatar URLs                          |
-| `SESSION_TTL_DAYS`       | server         | no       | `30`                           | Idle timeout; absolute limit is 3×           |
-| `COOKIE_DOMAIN`          | server         | no       | host-only                      | Parent domain if web/API are on subdomains   |
-| `INITIAL_COIN_BONUS`     | server         | no       | `10000`                        | Coins credited once at registration          |
-| `SMTP_URL`               | server         | prod     | —                              | `smtp://` or `smtps://`; see below           |
-| `MAIL_FROM`              | server         | no       | `Tiến Lên Online <no-reply@…>` |                                              |
-| `MAIL_OUTBOX_DIR`        | server         | no       | `.local/mail`                  | Dev outbox (relative to the API's directory) |
-| `UPLOAD_DIR`             | server         | no       | `.local/uploads`               | Avatars; shared storage when scaled out      |
+| Variable                  | Used by        | Required | Default                        | Notes                                        |
+| ------------------------- | -------------- | -------- | ------------------------------ | -------------------------------------------- |
+| `DATABASE_URL`            | server, Prisma | yes      | —                              | `postgresql://…`                             |
+| `REDIS_URL`               | server         | no       | `redis://localhost:6379`       | `redis://` or `rediss://`                    |
+| `PORT`                    | server         | no       | `4000`                         |                                              |
+| `WEB_ORIGIN`              | server         | no       | `http://localhost:3000`        | Comma-separated CORS allow-list (http/https) |
+| `LOG_LEVEL`               | server         | no       | `info`                         | `silent` … `trace`                           |
+| `NEXT_PUBLIC_API_URL`     | web (browser)  | no       | `http://localhost:4000/api/v1` | Inlined at build time                        |
+| `API_INTERNAL_URL`        | web (server)   | no       | `NEXT_PUBLIC_API_URL`          | API base URL from inside the network         |
+| `NEXT_PUBLIC_UI_PREVIEW`  | web (build)    | no       | `false`                        | Mock data on signed-in screens; never deploy |
+| `POSTGRES_*`              | docker compose | no       | see `.env.example`             | Must match `DATABASE_URL`                    |
+| `TRUST_PROXY`             | server         | no       | `0`                            | Reverse proxies whose X-Forwarded-For counts |
+| `WEB_APP_URL`             | server         | no       | first `WEB_ORIGIN`             | Base of links in emails                      |
+| `API_PUBLIC_URL`          | server         | no       | `http://localhost:PORT/api/v1` | Base of avatar URLs                          |
+| `SESSION_TTL_DAYS`        | server         | no       | `30`                           | Idle timeout; absolute limit is 3×           |
+| `COOKIE_DOMAIN`           | server         | no       | host-only                      | Parent domain if web/API are on subdomains   |
+| `INITIAL_COIN_BONUS`      | server         | no       | `10000`                        | Coins credited once at registration          |
+| `SMTP_URL`                | server         | prod     | —                              | `smtp://` or `smtps://`; see below           |
+| `MAIL_FROM`               | server         | no       | `Tiến Lên Online <no-reply@…>` |                                              |
+| `MAIL_OUTBOX_DIR`         | server         | no       | `.local/mail`                  | Dev outbox (relative to the API's directory) |
+| `UPLOAD_DIR`              | server         | no       | `.local/uploads`               | Avatars; shared storage when scaled out      |
+| `ROOM_IDLE_MINUTES`       | server         | no       | `30`                           | Unstarted rooms expire after this idle time  |
+| `RECONNECT_GRACE_SECONDS` | server         | no       | `60`                           | Waiting-room seat kept after a disconnect    |
 
 **Email.** With `SMTP_URL` set, emails go through SMTP. Without it, development writes each
 email as a text file to `MAIL_OUTBOX_DIR` (`apps/server/.local/mail` under `pnpm dev`), so you
@@ -162,9 +165,9 @@ Normally the signed-in screens need a real account (Phase 3). Rooms and matches 
 Phase 5, so to work on those screens before then, build or start the web app with
 `NEXT_PUBLIC_UI_PREVIEW=true`. **UI preview mode** skips sign-in and uses the in-memory mock
 in `apps/web/lib/dev-preview/`, with a visible "preview" banner on every screen. The login and
-registration forms always call the real API, even in preview mode. The mock does not
-use the game engine yet (the real match flow arrives in Phase 5), and its bots only play
-single cards.
+registration forms always call the real API, even in preview mode. The mock does not use
+the game engine, and its bots only play single cards; real matches (without preview mode)
+use the server and the full rules.
 
 PWA behaviour:
 
@@ -189,8 +192,9 @@ version 2. Presets are never edited in place; a match copies its preset into
 `matches.ruleSnapshot`.
 
 The engine (`@tienlen/shared`, `packages/shared/src/game/`) is pure TypeScript with no
-framework, clock or I/O. The server runs it as the authority (Phase 5); the web client may
-use the same functions for instant feedback, but the server decides.
+framework, clock or I/O. The server runs it as the authority; the web client uses the
+classifier only to label the selected cards and disable "Đánh" for a non-combination. The
+server decides everything else.
 
 | Module             | Functions                                                                                  |
 | ------------------ | ------------------------------------------------------------------------------------------ |
@@ -295,6 +299,67 @@ real images survive. Suspending a user requires a reason, revokes their sessions
 written to `admin_audit_logs`. Admins cannot suspend themselves. The first admin is created
 from the command line: `pnpm db:set-role <email> ADMIN`.
 
+## Rooms, matches and realtime (Phase 5)
+
+**Commands are REST; Socket.IO only notifies.** Every command gets an HTTP status, the CSRF
+origin check and a rate limit. Notifications never carry private data. They name what changed
+(`room:updated { roomId }`, `game:updated { roomId, matchId, stateVersion }`,
+`rooms:changed`, `matchmaking:updated { status }`, `user:updated`), and each client refetches
+its own view. The contract is `packages/shared/src/contracts/realtime.ts`. The socket is
+served at `/api/v1/socket.io`; the handshake must carry a valid session cookie and, when an
+`Origin` header is present, an allowed origin. After a reconnect the web app refetches
+everything, because notifications sent while it was offline are lost.
+
+| Method | Path                               | Success                  | Typical errors                                                                  |
+| ------ | ---------------------------------- | ------------------------ | ------------------------------------------------------------------------------- |
+| GET    | `/rooms?maxEntryFee&onlyWithSeats` | `RoomSummary[]` (public) | —                                                                               |
+| GET    | `/rooms/options`                   | `RoomOptions`            | —                                                                               |
+| POST   | `/rooms`                           | `201 { roomId }`         | `400`, `409 ALREADY_IN_ROOM`; idempotent per `requestId`                        |
+| POST   | `/rooms/join-by-code`              | `{ roomId }`             | `404 ROOM_NOT_FOUND`, `403 INVALID_ROOM_PASSWORD`, `409 ROOM_FULL`              |
+| GET    | `/rooms/:roomId`                   | `RoomDetail`             | `403` (private room, not a member), 404                                         |
+| POST   | `/rooms/:roomId/join`              | `{ roomId }`             | as join-by-code, `409 ROOM_ALREADY_STARTED`                                     |
+| PUT    | `/rooms/:roomId/ready`             | `RoomDetail`             | 403, 409                                                                        |
+| PATCH  | `/rooms/:roomId/settings`          | `RoomDetail` (host only) | 400, 403, 409                                                                   |
+| POST   | `/rooms/:roomId/start`             | `RoomDetail` (host only) | `403`, `409 ROOM_NOT_READY`                                                     |
+| POST   | `/rooms/:roomId/leave`             | `204`                    | `409 ROOM_ALREADY_STARTED`                                                      |
+| GET    | `/rooms/:roomId/game`              | `PlayerGameView`         | 403 (not a player), 404                                                         |
+| POST   | `/rooms/:roomId/game/play`         | `PlayerGameView`         | `409 NOT_YOUR_TURN`, `STALE_STATE`, `MATCH_FINISHED`; `400 INVALID_COMBINATION` |
+| POST   | `/rooms/:roomId/game/pass`         | `PlayerGameView`         | `409 PASS_NOT_ALLOWED`, as play                                                 |
+| GET    | `/rooms/:roomId/game/result`       | `MatchResult`            | 403, 404 (not finished)                                                         |
+| GET    | `/matchmaking`                     | `MatchmakingStatus`      | —                                                                               |
+| POST   | `/matchmaking` `{ entryFee }`      | `201 MatchmakingStatus`  | 400, `409 ALREADY_IN_ROOM`                                                      |
+| DELETE | `/matchmaking`                     | `MatchmakingStatus`      | —                                                                               |
+
+How the server keeps play authoritative:
+
+- **Locks.** Room commands lock the room row and match actions lock the match row
+  (`SELECT … FOR UPDATE`), so concurrent requests apply one at a time on any instance.
+  Status changes follow the shared transition tables.
+- **Actions.** Each play or pass names the `stateVersion` it was decided on (otherwise
+  `STALE_STATE`) and carries an `actionId`. A retried `actionId` returns the current view and
+  changes nothing. The engine validates turn, ownership, combination and comparison.
+- **Persistence.** The engine state and turn deadline are stored in `matches.stateSnapshot`,
+  and every event in `match_events`. The `DEALT` event holds the full deal for audit; it is
+  never sent to clients. Each player's view contains only their own hand.
+- **Deadlines.** The server owns the deadline. One second after it, the server applies the
+  timeout action (pass, or lead the weakest card). Timers are rebuilt from the database when
+  the server starts, so a restart does not stall a match. If a player's action arrives first,
+  the timer sees a newer version and does nothing.
+- **Disconnects.** A dropped socket marks the seat as disconnected, and the others see it. In a
+  waiting room the seat is freed after `RECONNECT_GRACE_SECONDS`. In a match the player keeps
+  the seat and the timeout action plays for them until they return; nobody is awarded a win
+  or coins because of it. Reconnecting simply refetches the authoritative view.
+- **Lifecycle.** The host starts a READY room (four ready players); quick match starts its own
+  room. Rooms that never start expire after `ROOM_IDLE_MINUTES`. When a match finishes, the
+  placements and statistics are stored, the room becomes FINISHED and its seats are freed.
+- **Free rooms only, for now.** Entry fees are charged and paid out in Phase 6. Until then the
+  server offers only the free entry fee, so no match promises coins it cannot settle.
+
+**Scaling.** Row locks and the database keep actions safe across API instances, but three
+pieces are still per process: quick-match queues, socket presence counts and turn timers.
+Run a single API instance until those move to Redis and Socket.IO uses the Redis adapter
+(Phase 8).
+
 ## Data model
 
 [`apps/server/prisma/schema.prisma`](apps/server/prisma/schema.prisma) defines all entities:
@@ -320,8 +385,13 @@ Integrity is enforced in the database, not only in application code:
   `degraded`. The Redis code path is covered by the stubbed e2e tests only.
 - Docker files were written but not executed on the verification machine, which has no Docker.
   CI runs against real PostgreSQL and Redis service containers.
-- With a real account, the lobby shows "Sắp ra mắt" for rooms, quick play, rewards,
-  leaderboard and notifications until Phases 5–7. Wallet and history pages are placeholders.
+- With a real account, the lobby shows "Sắp ra mắt" for rewards, leaderboard and
+  notifications until Phases 6–7. Wallet and history pages are placeholders. Only free rooms
+  are offered until Phase 6.
+- Quick-match queues, presence counts and turn timers live in one API process (see
+  "Scaling"). A restart empties the queues; matches resume from the database.
+- Open sockets are not closed when a session is revoked. They carry no private data, and the
+  next REST call fails with 401.
 - Google OAuth is not implemented (optional in the specification).
 - Rate limiting falls back to per-process memory when Redis is unreachable. With several API
   instances and no Redis, the effective limits are multiplied by the number of instances.

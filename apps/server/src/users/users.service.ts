@@ -40,7 +40,7 @@ export class UsersService {
     return {
       id: user.id,
       displayName: user.profile?.displayName ?? '',
-      avatarUrl: this.avatarUrl(user.profile?.avatarUrl ?? null),
+      avatarUrl: this.publicAvatarUrl(user.profile?.avatarUrl ?? null),
       createdAt: user.createdAt.toISOString(),
       balance: user.wallet?.balance ?? 0,
       matchesPlayed: user.profile?.matchesPlayed ?? 0,
@@ -94,7 +94,7 @@ export class UsersService {
    * `avatarUrl` holds either an absolute URL (e.g. from an OAuth provider) or the name of an
    * uploaded file, which is served by GET /avatars/:file.
    */
-  private avatarUrl(stored: string | null): string | null {
+  publicAvatarUrl(stored: string | null): string | null {
     if (!stored) return null;
     return /^https?:\/\//.test(stored) ? stored : `${this.avatarBaseUrl}/${stored}`;
   }

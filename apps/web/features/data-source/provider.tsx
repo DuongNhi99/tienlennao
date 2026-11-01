@@ -58,6 +58,9 @@ function EventBridge({ source }: { source: GameDataSource }) {
           case 'notifications':
             void queryClient.invalidateQueries({ queryKey: queryKeys.notifications });
             break;
+          case 'resync':
+            void queryClient.invalidateQueries();
+            break;
         }
       }),
     [queryClient, source],

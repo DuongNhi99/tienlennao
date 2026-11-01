@@ -1,11 +1,26 @@
-import { currentUserSummarySchema, ERROR_MESSAGES_VI } from '@tienlen/shared';
-import { ApiClientError, apiRequest } from '@/lib/api/client';
-import type { GameDataSource } from './types';
+import {
+  type ClientToServerEvents,
+  currentUserSummarySchema,
+  ERROR_MESSAGES_VI,
+  matchmakingStatusSchema,
+  matchResultSchema,
+  playerGameViewSchema,
+  roomDetailSchema,
+  roomOptionsSchema,
+  roomSummarySchema,
+  type ServerToClientEvents,
+  SOCKET_IO_PATH,
+} from '@tienlen/shared';
+import { io, type Socket } from 'socket.io-client';
+import { z } from 'zod';
+import { ApiClientError, apiRequest, noContentSchema } from '@/lib/api/client';
+import { publicEnv } from '@/lib/env';
+import type { DataSourceEvent, GameDataSource } from './types';
 
 /**
- * The real backend. Rooms and matches (Phase 5), wallet rewards (Phase 6), and leaderboard
- * and notifications (Phase 7) do not exist on the server yet: those methods reject with
- * FEATURE_UNAVAILABLE so screens say "coming soon" instead of showing invented data.
+ * The real backend. Rooms, quick match and matches are served by the API (Phase 5); wallet
+ * rewards (Phase 6), and leaderboard and notifications (Phase 7) are not yet: those methods
+ * reject with FEATURE_UNAVAILABLE so screens say "coming soon" instead of inventing data.
  */
 function unavailable(): Promise<never> {
   return Promise.reject(
@@ -13,33 +28,125 @@ function unavailable(): Promise<never> {
   );
 }
 
+const roomIdResponseSchema = z.object({ roomId: z.uuid() });
+const room = (roomId: string) => `/rooms/${encodeURIComponent(roomId)}`;
+
+/**
+ * Server notifications (Socket.IO, authenticated by the session cookie) become data-source
+ * events. They only say what changed; screens refetch through REST. After a reconnect every
+ * query is refreshed, because notifications sent while offline are lost.
+ */
+function createNotifications() {
+  const listeners = new Set<(event: DataSourceEvent) => void>();
+  let socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
+  const emit = (event: DataSourceEvent) => listeners.forEach((listener) => listener(event));
+
+  function open() {
+    const next: Socket<ServerToClientEvents, ClientToServerEvents> = io(
+      new URL(publicEnv.NEXT_PUBLIC_API_URL).origin,
+      { path: SOCKET_IO_PATH, withCredentials: true },
+    );
+    let connectedBefore = false;
+    next.on('connect', () => {
+      if (connectedBefore) emit({ type: 'resync' });
+      connectedBefore = true;
+    });
+    next.on('rooms:changed', () => emit({ type: 'rooms' }));
+    next.on('room:updated', ({ roomId }) => emit({ type: 'room', roomId }));
+    next.on('game:updated', ({ roomId }) => emit({ type: 'game', roomId }));
+    next.on('matchmaking:updated', () => emit({ type: 'matchmaking' }));
+    next.on('user:updated', () => emit({ type: 'user' }));
+    return next;
+  }
+
+  return (listener: (event: DataSourceEvent) => void) => {
+    listeners.add(listener);
+    socket ??= open();
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) {
+        socket?.close();
+        socket = null;
+      }
+    };
+  };
+}
+
 export function createApiDataSource(): GameDataSource {
   return {
     kind: 'api',
-    // Server push (Socket.IO) arrives with rooms in Phase 5.
-    subscribe: () => () => undefined,
+    subscribe: createNotifications(),
 
     getCurrentUser: () => apiRequest('/users/me', { schema: currentUserSummarySchema }),
 
-    listRooms: unavailable,
-    getRoomOptions: unavailable,
-    createRoom: unavailable,
-    joinRoom: unavailable,
-    joinRoomByCode: unavailable,
-    getRoom: unavailable,
-    setReady: unavailable,
-    updateRoomSettings: unavailable,
-    startMatch: unavailable,
-    leaveRoom: unavailable,
+    listRooms: (filter) => {
+      const query = new URLSearchParams();
+      if (filter.maxEntryFee !== undefined) query.set('maxEntryFee', String(filter.maxEntryFee));
+      if (filter.onlyWithSeats) query.set('onlyWithSeats', 'true');
+      const search = query.toString();
+      return apiRequest(`/rooms${search ? `?${search}` : ''}`, {
+        schema: roomSummarySchema.array(),
+      });
+    },
+    getRoomOptions: () => apiRequest('/rooms/options', { schema: roomOptionsSchema }),
+    createRoom: (input) =>
+      apiRequest('/rooms', { method: 'POST', body: input, schema: roomIdResponseSchema }),
+    joinRoom: (roomId, password) =>
+      apiRequest(`${room(roomId)}/join`, {
+        method: 'POST',
+        body: { password },
+        schema: roomIdResponseSchema,
+      }),
+    joinRoomByCode: (input) =>
+      apiRequest('/rooms/join-by-code', {
+        method: 'POST',
+        body: input,
+        schema: roomIdResponseSchema,
+      }),
+    getRoom: (roomId) => apiRequest(room(roomId), { schema: roomDetailSchema }),
+    setReady: (roomId, ready) =>
+      apiRequest(`${room(roomId)}/ready`, {
+        method: 'PUT',
+        body: { ready },
+        schema: roomDetailSchema,
+      }),
+    updateRoomSettings: (roomId, settings) =>
+      apiRequest(`${room(roomId)}/settings`, {
+        method: 'PATCH',
+        body: settings,
+        schema: roomDetailSchema,
+      }),
+    startMatch: (roomId) =>
+      apiRequest(`${room(roomId)}/start`, { method: 'POST', schema: roomDetailSchema }),
+    leaveRoom: async (roomId) => {
+      await apiRequest(`${room(roomId)}/leave`, { method: 'POST', schema: noContentSchema });
+    },
 
-    getGameView: unavailable,
-    playCards: unavailable,
-    pass: unavailable,
-    getMatchResult: unavailable,
+    getGameView: (roomId) => apiRequest(`${room(roomId)}/game`, { schema: playerGameViewSchema }),
+    playCards: ({ roomId, ...action }) =>
+      apiRequest(`${room(roomId)}/game/play`, {
+        method: 'POST',
+        body: action,
+        schema: playerGameViewSchema,
+      }),
+    pass: ({ roomId, ...action }) =>
+      apiRequest(`${room(roomId)}/game/pass`, {
+        method: 'POST',
+        body: action,
+        schema: playerGameViewSchema,
+      }),
+    getMatchResult: (roomId) =>
+      apiRequest(`${room(roomId)}/game/result`, { schema: matchResultSchema }),
 
-    getMatchmakingStatus: unavailable,
-    joinMatchmaking: unavailable,
-    cancelMatchmaking: unavailable,
+    getMatchmakingStatus: () => apiRequest('/matchmaking', { schema: matchmakingStatusSchema }),
+    joinMatchmaking: (entryFee) =>
+      apiRequest('/matchmaking', {
+        method: 'POST',
+        body: { entryFee },
+        schema: matchmakingStatusSchema,
+      }),
+    cancelMatchmaking: () =>
+      apiRequest('/matchmaking', { method: 'DELETE', schema: matchmakingStatusSchema }),
 
     getLeaderboardPreview: unavailable,
     getDailyReward: unavailable,

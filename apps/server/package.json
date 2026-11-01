@@ -24,6 +24,8 @@
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.1.6",
     "@nestjs/platform-express": "^11.1.6",
+    "@nestjs/platform-socket.io": "^11.2.8",
+    "@nestjs/websockets": "^11.2.8",
     "@node-rs/argon2": "^2.2.2",
     "@prisma/client": "~6.19.0",
     "@tienlen/shared": "workspace:*",
@@ -37,6 +39,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "sharp": "^0.34.5",
+    "socket.io": "^4.8.3",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -51,6 +54,7 @@
     "@types/supertest": "^6.0.3",
     "dotenv-cli": "^10.0.0",
     "prisma": "~6.19.0",
+    "socket.io-client": "^4.8.4",
     "supertest": "^7.1.4",
     "tsx": "^4.20.6",
     "unplugin-swc": "^1.5.7",

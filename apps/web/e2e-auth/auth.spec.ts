@@ -38,7 +38,7 @@ test('register: signed in with the starting balance and a verification reminder'
   await expect(page.getByText('Xin chào, Người Thử!')).toBeVisible();
   await expect(page.getByRole('link', { name: /^Ví xu: / })).toContainText('10.000');
   await expect(page.getByText(`Email ${email} chưa được xác minh.`)).toBeVisible();
-  // Rooms do not exist on the server yet: an honest "coming soon", never mock data.
+  // Rewards and rankings arrive in later phases: an honest "coming soon", never mock data.
   await expect(page.getByText('Sắp ra mắt').first()).toBeVisible();
   await expect(page.getByText(/Bản xem trước giao diện/)).toHaveCount(0);
 
@@ -53,7 +53,10 @@ test('the emailed link verifies the address', async ({ page }) => {
   await expect(page.getByText('Email của bạn đã được xác minh. Cảm ơn bạn!')).toBeVisible();
   // Opening the same link again fails: tokens are single-use.
   await page.reload();
-  await expect(page.getByRole('alert')).toContainText('không hợp lệ hoặc đã hết hạn');
+  // Next.js also renders an (empty) route-announcer alert, so match by text.
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'không hợp lệ hoặc đã hết hạn' }),
+  ).toBeVisible();
 });
 
 test('profile: rename, upload an avatar, and sign out', async ({ page }) => {
@@ -78,7 +81,7 @@ test('profile: rename, upload an avatar, and sign out', async ({ page }) => {
   await expect(page.getByText('Đã cập nhật ảnh đại diện.')).toBeVisible();
   await expect(page.locator('main img').first()).toHaveAttribute('src', /\/avatars\/.+\.webp$/);
 
-  await page.getByRole('button', { name: 'Đăng xuất' }).click();
+  await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
   await page.goto('/lobby');
   await expect(page).toHaveURL(/\/login\?next=%2Flobby$/);
