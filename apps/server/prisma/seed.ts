@@ -1,20 +1,14 @@
 /* eslint-disable no-console -- CLI script */
 import { PrismaClient } from '@prisma/client';
+import { DEFAULT_GAME_RULES, gameRulesSchema } from '@tienlen/shared';
 
 // Local-development seed. Idempotent: safe to run repeatedly.
 // Seeds reference/configuration data only — no users, balances, or fake matches.
 const prisma = new PrismaClient();
 
-const DEFAULT_RULES_V1 = {
-  variant: 'TIEN_LEN_MIEN_NAM',
-  players: 4,
-  cardsPerPlayer: 13,
-  rankOrder: ['3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2'],
-  // Lowest to highest: Spades ♠ < Clubs ♣ < Diamonds ♦ < Hearts ♥.
-  suitOrder: ['S', 'C', 'D', 'H'],
-  // The full rule specification (special combinations, penalties) is finalized in Phase 4.
-  specVersion: 'draft-1',
-};
+// Rule presets are versioned and never edited in place: matches copy them into
+// `ruleSnapshot`. Version 1 was a pre-specification draft; version 2 is docs/GAME_RULES.md.
+const DEFAULT_RULES_VERSION = 2;
 
 const ACHIEVEMENTS = [
   {
@@ -38,19 +32,26 @@ const ACHIEVEMENTS = [
 ];
 
 async function main(): Promise<void> {
-  await prisma.gameRuleConfiguration.upsert({
-    where: { key_version: { key: 'default', version: 1 } },
-    update: {},
-    create: {
-      key: 'default',
-      version: 1,
-      name: 'Tiến Lên Miền Nam — mặc định',
-      isActive: true,
-      rules: DEFAULT_RULES_V1,
-      allowedEntryFees: [0, 100, 500, 1000, 5000],
-      allowedTurnTimers: [15, 30, 45],
-    },
-  });
+  await prisma.$transaction([
+    prisma.gameRuleConfiguration.upsert({
+      where: { key_version: { key: 'default', version: DEFAULT_RULES_VERSION } },
+      update: { isActive: true },
+      create: {
+        key: 'default',
+        version: DEFAULT_RULES_VERSION,
+        name: 'Tiến Lên Miền Nam — mặc định',
+        isActive: true,
+        rules: gameRulesSchema.parse(DEFAULT_GAME_RULES),
+        allowedEntryFees: [0, 100, 500, 1000, 5000],
+        allowedTurnTimers: [15, 30, 45],
+      },
+    }),
+    // Older versions stay for audit (rooms may reference them) but are no longer offered.
+    prisma.gameRuleConfiguration.updateMany({
+      where: { key: 'default', version: { not: DEFAULT_RULES_VERSION }, isActive: true },
+      data: { isActive: false },
+    }),
+  ]);
 
   for (const achievement of ACHIEVEMENTS) {
     await prisma.achievement.upsert({

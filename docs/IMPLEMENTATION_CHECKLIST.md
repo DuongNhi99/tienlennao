@@ -48,16 +48,42 @@ Fixes made while verifying Phase 2:
 - Full-height screens (game table, app shell) subtract the preview banner's height
   (`h-screen-fit`), so the bottom of the hand is no longer cut off.
 
-## Phase 3 — Authentication and profile ⏳
+## Phase 3 — Authentication and profile ✅
 
-Registration (Argon2id), server-managed sessions (HttpOnly cookie plus a hashed token in the
-`sessions` table), login rate limiting, logout and logout-all, password reset, email
-verification, profile and stats, role guards, Google OAuth (optional).
+Integration tests run the API against a real PostgreSQL database (`pnpm test:integration`):
+3 files, 35 tests, all passed. The Playwright auth suite is `apps/web/e2e-auth/`.
 
-## Phase 4 — Game engine ⏳
+| Item                                     | Status | Evidence                                                                                 |
+| ---------------------------------------- | ------ | ---------------------------------------------------------------------------------------- |
+| Registration (Argon2id), duplicate email | ✅     | `auth.test.ts`; profile, wallet and initial bonus created together                       |
+| Login, server-managed sessions           | ✅     | HttpOnly cookie, SHA-256 token hash in `sessions`, sliding expiry                        |
+| Logout and logout-all                    | ✅     | Sessions revoked server-side; checked on every request                                   |
+| Login and email rate limits              | ✅     | Redis fixed windows with in-memory fallback; 429 with `Retry-After`                      |
+| Password reset, email verification       | ✅     | `email-tokens.test.ts`: single-use, latest-link-only, expiry, reset signs out everywhere |
+| Profile, avatar, statistics              | ✅     | `profile-admin.test.ts`; avatars re-encoded to 256×256 WebP                              |
+| Role guards, admin suspension            | ✅     | Deny-by-default guard, `@Roles('ADMIN')`, audited suspension                             |
+| Google OAuth (optional)                  | ⏳     | Not implemented                                                                          |
 
-Written rule specification for all regional variants, deck/shuffle/deal, combination
-classification and comparison, turn state machine, match resolution, exhaustive unit tests.
+## Phase 4 — Game engine ✅
+
+Rule specification: [GAME_RULES.md](GAME_RULES.md). Engine: `packages/shared/src/game/`.
+`pnpm --filter @tienlen/shared test`: 12 files, 158 tests, all passed (including the Phase 1–3
+shared tests).
+
+| Item                                  | Status | Evidence                                                                                        |
+| ------------------------------------- | ------ | ----------------------------------------------------------------------------------------------- |
+| Written rule specification            | ✅     | `docs/GAME_RULES.md` (spec v2): every regional variant decided; configurable ones listed        |
+| Rule presets                          | ✅     | `gameRulesSchema`, `DEFAULT_GAME_RULES`; seed stores preset `default` v2, v1 draft deactivated  |
+| Deck, secure shuffle, deal            | ✅     | `deck.test.ts`: 52 unique cards, 13 each, nothing lost, CSPRNG with rejection sampling          |
+| Combination classification            | ✅     | `combinations.test.ts`: every 2- and 3-card selection checked against an independent rule       |
+| Comparison and bombs                  | ✅     | Same-shape comparison, bomb table, each bomb power toggled off; Ace/2 straight edge cases       |
+| Turn state machine                    | ✅     | `engine.test.ts`: opening card, turn order, pass lockout, trick resolution, lead after finish   |
+| Instant wins, leftover penalties      | ✅     | `hand-analysis.test.ts`; priority and tie-break between players in `engine.test.ts`             |
+| Timeout action                        | ✅     | Pass if possible, otherwise the weakest single (satisfies the 3♠ opening rule)                  |
+| Match resolution                      | ✅     | Placements for both end conditions and instant wins; penalties only for unfinished hands        |
+| Whole-match simulation                | ✅     | `simulation.test.ts`: 900 seeded random matches, invariants checked after every action          |
+| Turn deadlines, idempotency, versions | ⏳     | Server responsibilities in Phase 5; the engine supplies `version` and `applyTimeout`            |
+| Client-side feedback with the engine  | ⏳     | Phase 5, when the game screen talks to the real server (the preview mock still uses stub rules) |
 
 ## Phase 5 — Multiplayer and rooms ⏳
 
@@ -86,5 +112,12 @@ backup documentation.
   are deleted when a player leaves or the room closes.
 - **Ledger:** append-only; signed `amount` (credit > 0, debit < 0); `balanceAfter` stored;
   idempotency key unique per user.
+- **Game engine location:** `@tienlen/shared`, not the server, so the client can reuse the
+  same rules for feedback. The server stays authoritative: it alone holds full states and
+  runs actions.
+- **Rules:** see `docs/GAME_RULES.md`. Notable defaults: 3♠ must open; passing locks a player
+  out of the trick; play continues until three players finish; no out-of-turn chops; no
+  final-play restrictions; no "cóng". Chops are recorded but carry no points until Phase 6
+  decides the settlement policy.
 - **Boot without dependencies:** the API starts even if PostgreSQL or Redis are down, and
   readiness reports 503 so orchestrators withhold traffic.

@@ -7,7 +7,7 @@ responsive, installable **Next.js PWA** with a **NestJS** backend.
 > or real-world prize redemption. Adding any of these requires a separate legal, compliance,
 > and security review first.
 
-**Status:** Phase 1 (Foundation) is complete. See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
+**Status:** Phases 1–4 (foundation, UI and PWA, accounts, game engine) are complete. See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
 
 ---
 
@@ -21,8 +21,9 @@ responsive, installable **Next.js PWA** with a **NestJS** backend.
 │       ├── prisma/     Prisma schema, migrations, seed (PostgreSQL)
 │       └── src/        config · common · prisma · redis · health · (feature modules per phase)
 ├── packages/
-│   └── shared/         Zod schemas, error codes, lifecycle state machines, constants
-│                       shared by web and server (compiled to CommonJS in dist/)
+│   └── shared/         Zod schemas, error codes, lifecycle state machines, constants and
+│                       the game engine, shared by web and server (CommonJS in dist/)
+├── docs/               GAME_RULES.md (rule specification), IMPLEMENTATION_CHECKLIST.md
 ├── scripts/            embedded-postgres.mjs — Docker-less PostgreSQL for local dev
 ├── docker-compose.yml  PostgreSQL 17 + Redis 7 for local development
 └── .github/workflows/  CI: format, lint, typecheck, test, migrate, seed, build
@@ -35,7 +36,9 @@ Boundaries:
 - **`@tienlen/shared`** is the single source of truth for API contracts (Zod schemas), error
   codes plus Vietnamese messages, and the room/match lifecycle transition tables. The Prisma
   enums are tested against these tables (`apps/server/test/schema-contract.test.ts`).
-- Game rules will live in a framework-free engine module (Phase 4), never in React components.
+- **Game rules** live in a framework-free, deterministic engine in
+  `packages/shared/src/game/` (see [Game rules and engine](#game-rules-and-engine-phase-4)),
+  never in React components.
 
 ### Technology versions
 
@@ -160,7 +163,8 @@ Phase 5, so to work on those screens before then, build or start the web app wit
 `NEXT_PUBLIC_UI_PREVIEW=true`. **UI preview mode** skips sign-in and uses the in-memory mock
 in `apps/web/lib/dev-preview/`, with a visible "preview" banner on every screen. The login and
 registration forms always call the real API, even in preview mode. The mock does not
-validate card combinations (Phase 4), and its bots only play single cards.
+use the game engine yet (the real match flow arrives in Phase 5), and its bots only play
+single cards.
 
 PWA behaviour:
 
@@ -173,6 +177,40 @@ PWA behaviour:
 - Install prompt: browsers that fire `beforeinstallprompt` (Chrome, Edge, Android) get an
   install button. iOS/iPadOS Safari gets "Share → Add to Home Screen" instructions. Other
   browsers show nothing.
+
+## Game rules and engine (Phase 4)
+
+The rule specification is [docs/GAME_RULES.md](docs/GAME_RULES.md). It settles every
+regional variant: card and suit order, combinations, which bombs beat what, the opening rule,
+passing, how the lead moves after a player finishes, how a match ends, instant wins,
+leftover penalties and the timeout action. Configurable rules are a `GameRules` object
+validated by `gameRulesSchema`. `pnpm db:seed` stores the default as preset `default`
+version 2. Presets are never edited in place; a match copies its preset into
+`matches.ruleSnapshot`.
+
+The engine (`@tienlen/shared`, `packages/shared/src/game/`) is pure TypeScript with no
+framework, clock or I/O. The server runs it as the authority (Phase 5); the web client may
+use the same functions for instant feedback, but the server decides.
+
+| Module             | Functions                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `deck.ts`          | `createDeck`, `shuffleDeck` (CSPRNG by default), `dealCards`, `createSeededRandom` (tests) |
+| `cards.ts`         | `sortCards`, `compareCards`, `cardStrength`                                                |
+| `combinations.ts`  | `classifyCombination`, `validateCombination`, `canBeatCombination`, `listCombinations`     |
+| `hand-analysis.ts` | `detectInstantWin`, `scoreLeftoverHand`                                                    |
+| `engine.ts`        | `startMatch`, `determineOpeningPlayer`, `applyPlay`, `applyPass`, `applyTimeout`,          |
+|                    | `advanceTurn`, `resolveTrick`, `legalPlays`, `determineWinner`, `calculateMatchResult`     |
+
+Actions return `{ ok: true, state, events }` or `{ ok: false, violation }`. They never
+mutate their input. `GAME_VIOLATION_ERROR_CODES` maps each violation to an API error code.
+Event types match the `MatchEventType` database enum. Match states are plain JSON, ready for
+`matches.stateSnapshot`.
+
+Tests: `pnpm --filter @tienlen/shared test`. Besides rule-by-rule cases, the suite checks
+every 2- and 3-card selection against an independent definition and compares
+`listCombinations` with the full power set of random 13-card hands. It also plays 900 seeded
+random matches across three rule sets, checking card conservation, turn order, pass lockout,
+immutability and placements after every action.
 
 ## API conventions (implemented so far)
 
