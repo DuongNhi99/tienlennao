@@ -1,0 +1,41 @@
+# Render Blueprint for free hosting: the API (Docker, free plan) and a free Key Value (Redis)
+# instance. PostgreSQL is on Supabase and the web app on Vercel, which proxies /api/v1 here.
+# Step-by-step setup: docs/FREE_HOSTING.md.
+services:
+  - type: web
+    name: tienlen-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./apps/server/Dockerfile
+    dockerContext: .
+    dockerCommand: sh docker-start.sh
+    healthCheckPath: /api/v1/health/live
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Supabase → Connect → Session pooler URI, with ?connection_limit=5 appended.
+      - key: DATABASE_URL
+        sync: false
+      # The Vercel address, e.g. https://tienlen-online.vercel.app (no trailing slash).
+      - key: WEB_ORIGIN
+        sync: false
+      # The same address followed by /api/v1 (avatar links).
+      - key: API_PUBLIC_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: tienlen-redis
+          property: connectionString
+      # Browser → Vercel → Render's load balancer → API.
+      - key: TRUST_PROXY
+        value: '2'
+
+  - type: keyvalue
+    name: tienlen-redis
+    plan: free
+    region: singapore
+    # Rate-limit counters only: evicting old keys under memory pressure is harmless.
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []

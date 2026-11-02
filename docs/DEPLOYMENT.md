@@ -4,6 +4,73 @@ How to run Tiến Lên Online in production, scale it, back it up and recover it
 together with the README (architecture, environment variables, API) and
 [ECONOMY.md](ECONOMY.md) (coin rules).
 
+No server? [FREE_HOSTING.md](FREE_HOSTING.md) runs the app for free on Vercel, Render and
+Supabase (with the limits listed there).
+
+## Quick start: one server, deployed by GitHub Actions
+
+The ready-made setup in [`deploy/`](../deploy) runs everything on one Linux server behind Caddy
+(automatic HTTPS, one origin as recommended in section 2), with a daily database backup. Every
+push to `main` that passes CI is built into images on GitHub Actions, pushed to GitHub
+Container Registry and rolled out over SSH; nothing is built on the server.
+
+You need: an Ubuntu 22.04 or 24.04 server with at least 2 GB of RAM and a public IP (any VPS
+provider), a domain (or subdomain) you control, and an SMTP account for email.
+
+1. **DNS.** Create an A record for the domain (say `tienlen.example`) pointing at the server.
+2. **Prepare the server** (once, as root):
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/deploy/setup-server.sh \
+     | sh -s -- tienlen.example you@example.com
+   ```
+
+   It installs Docker, a firewall (22, 80, 443), swap and automatic security updates, creates
+   the `deploy` user and `/opt/tienlen/.env` (random database password), and prints a private
+   SSH key for GitHub Actions.
+
+3. **Email.** Edit `/opt/tienlen/.env` and set `SMTP_URL` and `MAIL_FROM` (see
+   [`deploy/.env.example`](../deploy/.env.example); any API variable from the README can go
+   there too).
+4. **GitHub** → the repository → Settings → Secrets and variables → Actions:
+
+   | Kind     | Name                 | Value                                                             |
+   | -------- | -------------------- | ----------------------------------------------------------------- |
+   | Variable | `APP_DOMAIN`         | `tienlen.example`                                                 |
+   | Secret   | `DEPLOY_HOST`        | the server's IP address or host name                              |
+   | Secret   | `DEPLOY_SSH_KEY`     | the private key printed by `setup-server.sh`                      |
+   | Secret   | `DEPLOY_KNOWN_HOSTS` | optional: `ssh-keyscan <host>` output, pins the server's host key |
+
+5. **Deploy.** Push to `main`, or Actions → Deploy → Run workflow. The workflow backs up the
+   database, applies migrations and the seed, starts the release, and checks
+   `https://<domain>/api/v1/health/ready`.
+6. **First administrator.** Register in the browser, then on the server:
+
+   ```sh
+   cd /opt/tienlen
+   docker compose run --rm migrate node_modules/.bin/tsx prisma/set-role.ts you@example.com ADMIN
+   ```
+
+Day to day, on the server in `/opt/tienlen` as `deploy`:
+
+| Task                   | Command                                                                                       |
+| ---------------------- | --------------------------------------------------------------------------------------------- |
+| Status, logs           | `docker compose ps` · `docker compose logs -f server`                                         |
+| Apply a changed `.env` | `docker compose up -d --wait`                                                                 |
+| Roll back              | GitHub: Actions → Deploy → Run workflow with the earlier commit SHA as `image_tag`            |
+| Backups                | `backups/` — daily `tienlen-*.dump` and a `pre-deploy-*.dump` per release; copy them off-site |
+
+Restoring a dump (rehearse it as in section 7):
+
+```sh
+docker compose stop caddy web server
+docker compose exec -T postgres pg_restore --clean --if-exists --no-owner -U tienlen -d tienlen \
+  < backups/tienlen-2026-11-02-0300.dump
+docker compose up -d --wait
+```
+
+To grow beyond one server, move PostgreSQL to a managed service and follow sections 2 and 6.
+
 ## 1. What runs where
 
 | Component  | Image / service                  | Notes                                                                      |

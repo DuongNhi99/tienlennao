@@ -47,7 +47,11 @@ function createNotifications() {
   function open() {
     const next: Socket<ServerToClientEvents, ClientToServerEvents> = io(
       new URL(publicEnv.NEXT_PUBLIC_API_URL).origin,
-      { path: SOCKET_IO_PATH, withCredentials: true },
+      {
+        path: SOCKET_IO_PATH,
+        withCredentials: true,
+        ...(publicEnv.NEXT_PUBLIC_SOCKET_POLLING_ONLY ? { transports: ['polling'] } : {}),
+      },
     );
     let connectedBefore = false;
     next.on('connect', () => {

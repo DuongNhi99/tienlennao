@@ -9,7 +9,8 @@ responsive, installable **Next.js PWA** with a **NestJS** backend.
 
 **Status:** Phases 1–8 (foundation, UI and PWA, accounts, game engine, multiplayer, wallet and
 rewards, history and administration, quality and deployment) are complete. Deployment and
-operations: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
+operations: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); free hosting without a server:
+[docs/FREE_HOSTING.md](docs/FREE_HOSTING.md). See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
 
 ---
 
@@ -27,8 +28,9 @@ operations: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). See [docs/IMPLEMENTATION_C
 │                       the game engine, shared by web and server (CommonJS in dist/)
 ├── docs/               GAME_RULES.md (rule specification), IMPLEMENTATION_CHECKLIST.md
 ├── scripts/            embedded-postgres.mjs — Docker-less PostgreSQL for local dev
+├── deploy/             Production stack for one server (Caddy, Compose, setup and deploy scripts)
 ├── docker-compose.yml  PostgreSQL 17 + Redis 7 for local development
-└── .github/workflows/  CI: format, lint, typecheck, test, migrate, seed, build
+└── .github/workflows/  CI: format, lint, typecheck, test, migrate, seed, build; Deploy
 ```
 
 Boundaries:
@@ -96,29 +98,30 @@ All variables live in one root `.env` (see [.env.example](.env.example)). The se
 its environment with Zod at startup and refuses to boot when it is invalid. The error lists
 variable names, never their values.
 
-| Variable                  | Used by        | Required | Default                        | Notes                                        |
-| ------------------------- | -------------- | -------- | ------------------------------ | -------------------------------------------- |
-| `DATABASE_URL`            | server, Prisma | yes      | —                              | `postgresql://…`                             |
-| `REDIS_URL`               | server         | no       | `redis://localhost:6379`       | `redis://` or `rediss://`                    |
-| `PORT`                    | server         | no       | `4000`                         |                                              |
-| `WEB_ORIGIN`              | server         | no       | `http://localhost:3000`        | Comma-separated CORS allow-list (http/https) |
-| `LOG_LEVEL`               | server         | no       | `info`                         | `silent` … `trace`                           |
-| `NEXT_PUBLIC_API_URL`     | web (browser)  | no       | `http://localhost:4000/api/v1` | Inlined at build time                        |
-| `API_INTERNAL_URL`        | web (server)   | no       | `NEXT_PUBLIC_API_URL`          | API base URL from inside the network         |
-| `NEXT_PUBLIC_UI_PREVIEW`  | web (build)    | no       | `false`                        | Mock data on signed-in screens; never deploy |
-| `POSTGRES_*`              | docker compose | no       | see `.env.example`             | Must match `DATABASE_URL`                    |
-| `TRUST_PROXY`             | server         | no       | `0`                            | Reverse proxies whose X-Forwarded-For counts |
-| `WEB_APP_URL`             | server         | no       | first `WEB_ORIGIN`             | Base of links in emails                      |
-| `API_PUBLIC_URL`          | server         | no       | `http://localhost:PORT/api/v1` | Base of avatar URLs                          |
-| `SESSION_TTL_DAYS`        | server         | no       | `30`                           | Idle timeout; absolute limit is 3×           |
-| `COOKIE_DOMAIN`           | server         | no       | host-only                      | Parent domain if web/API are on subdomains   |
-| `INITIAL_COIN_BONUS`      | server         | no       | `10000`                        | Coins credited once at registration          |
-| `SMTP_URL`                | server         | prod     | —                              | `smtp://` or `smtps://`; see below           |
-| `MAIL_FROM`               | server         | no       | `Tiến Lên Online <no-reply@…>` |                                              |
-| `MAIL_OUTBOX_DIR`         | server         | no       | `.local/mail`                  | Dev outbox (relative to the API's directory) |
-| `UPLOAD_DIR`              | server         | no       | `.local/uploads`               | Avatars; shared storage when scaled out      |
-| `ROOM_IDLE_MINUTES`       | server         | no       | `30`                           | Unstarted rooms expire after this idle time  |
-| `RECONNECT_GRACE_SECONDS` | server         | no       | `60`                           | Waiting-room seat kept after a disconnect    |
+| Variable                  | Used by         | Required | Default                        | Notes                                        |
+| ------------------------- | --------------- | -------- | ------------------------------ | -------------------------------------------- |
+| `DATABASE_URL`            | server, Prisma  | yes      | —                              | `postgresql://…`                             |
+| `REDIS_URL`               | server          | no       | `redis://localhost:6379`       | `redis://` or `rediss://`                    |
+| `PORT`                    | server          | no       | `4000`                         |                                              |
+| `WEB_ORIGIN`              | server          | no       | `http://localhost:3000`        | Comma-separated CORS allow-list (http/https) |
+| `LOG_LEVEL`               | server          | no       | `info`                         | `silent` … `trace`                           |
+| `NEXT_PUBLIC_API_URL`     | web (browser)   | no       | `http://localhost:4000/api/v1` | Inlined at build time                        |
+| `API_INTERNAL_URL`        | web (server)    | no       | `NEXT_PUBLIC_API_URL`          | API base URL from inside the network         |
+| `API_PROXY_ORIGIN`        | web (build+run) | no       | —                              | Proxy `/api/v1` to this API origin (Vercel)  |
+| `NEXT_PUBLIC_UI_PREVIEW`  | web (build)     | no       | `false`                        | Mock data on signed-in screens; never deploy |
+| `POSTGRES_*`              | docker compose  | no       | see `.env.example`             | Must match `DATABASE_URL`                    |
+| `TRUST_PROXY`             | server          | no       | `0`                            | Reverse proxies whose X-Forwarded-For counts |
+| `WEB_APP_URL`             | server          | no       | first `WEB_ORIGIN`             | Base of links in emails                      |
+| `API_PUBLIC_URL`          | server          | no       | `http://localhost:PORT/api/v1` | Base of avatar URLs                          |
+| `SESSION_TTL_DAYS`        | server          | no       | `30`                           | Idle timeout; absolute limit is 3×           |
+| `COOKIE_DOMAIN`           | server          | no       | host-only                      | Parent domain if web/API are on subdomains   |
+| `INITIAL_COIN_BONUS`      | server          | no       | `10000`                        | Coins credited once at registration          |
+| `SMTP_URL`                | server          | prod     | —                              | `smtp://` or `smtps://`; see below           |
+| `MAIL_FROM`               | server          | no       | `Tiến Lên Online <no-reply@…>` |                                              |
+| `MAIL_OUTBOX_DIR`         | server          | no       | `.local/mail`                  | Dev outbox (relative to the API's directory) |
+| `UPLOAD_DIR`              | server          | no       | `.local/uploads`               | Avatars; shared storage when scaled out      |
+| `ROOM_IDLE_MINUTES`       | server          | no       | `30`                           | Unstarted rooms expire after this idle time  |
+| `RECONNECT_GRACE_SECONDS` | server          | no       | `60`                           | Waiting-room seat kept after a disconnect    |
 
 **Email.** With `SMTP_URL` set, emails go through SMTP. Without it, development writes each
 email as a text file to `MAIL_OUTBOX_DIR` (`apps/server/.local/mail` under `pnpm dev`), so you

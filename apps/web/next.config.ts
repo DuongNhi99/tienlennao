@@ -8,9 +8,25 @@ const workspaceRoot = path.resolve(process.cwd(), '../..');
 // The monorepo keeps one .env at the root; apps/web/.env* files (if any) still take precedence.
 loadEnvConfig(workspaceRoot);
 
+/**
+ * Optional same-origin API proxy (hosting where the API runs elsewhere, e.g. Vercel + Render;
+ * see docs/DEPLOYMENT.md): /api/v1/* is forwarded to this origin, so the session cookie stays
+ * first-party. WebSockets cannot pass through such a proxy, so Socket.IO uses long-polling.
+ */
+const apiProxyOrigin = process.env.API_PROXY_ORIGIN?.replace(/\/+$/, '') || undefined;
+if (apiProxyOrigin) {
+  // On Vercel the public API URL is this deployment's own production domain.
+  const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  if (!process.env.NEXT_PUBLIC_API_URL && productionHost) {
+    process.env.NEXT_PUBLIC_API_URL = `https://${productionHost}/api/v1`;
+  }
+  process.env.NEXT_PUBLIC_SOCKET_POLLING_ONLY = 'true';
+}
+
 /** Identifies a deployment; versions the service worker caches. */
 function resolveBuildId(): string {
   if (process.env.BUILD_ID) return process.env.BUILD_ID;
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 12);
   try {
     return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
       .toString()
@@ -46,6 +62,19 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: workspaceRoot,
   generateBuildId: () => buildId,
   env: { NEXT_PUBLIC_BUILD_ID: buildId },
+  // Socket.IO's path ends with a slash (/api/v1/socket.io/); keep it when proxying.
+  skipTrailingSlashRedirect: Boolean(apiProxyOrigin),
+  rewrites() {
+    if (!apiProxyOrigin) return Promise.resolve([]);
+    return Promise.resolve({
+      beforeFiles: [
+        { source: '/api/v1/:path*/', destination: `${apiProxyOrigin}/api/v1/:path*/` },
+        { source: '/api/v1/:path*', destination: `${apiProxyOrigin}/api/v1/:path*` },
+      ],
+      afterFiles: [],
+      fallback: [],
+    });
+  },
   headers() {
     return Promise.resolve([
       { source: '/:path*', headers: securityHeaders },

@@ -1,0 +1,20 @@
+# One origin: /api/* (REST and Socket.IO) goes to the API, everything else to the web app.
+# Caddy obtains and renews the HTTPS certificate for APP_DOMAIN automatically; the domain's
+# DNS A record must point at this server before the first start.
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy server:4000 {
+			health_uri /api/v1/health/live
+		}
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
