@@ -327,6 +327,7 @@ everything, because notifications sent while it was offline are lost.
 | PUT    | `/rooms/:roomId/ready`             | `RoomDetail`             | 403, 409                                                                        |
 | PATCH  | `/rooms/:roomId/settings`          | `RoomDetail` (host only) | 400, 403, 409                                                                   |
 | POST   | `/rooms/:roomId/start`             | `RoomDetail` (host only) | `403`, `409 ROOM_NOT_READY`                                                     |
+| POST   | `/rooms/:roomId/rematch`           | `{ roomId }` (new room)  | `403` (not a player), `409 ROOM_ALREADY_STARTED`, `ALREADY_IN_ROOM`             |
 | POST   | `/rooms/:roomId/leave`             | `204`                    | `409 ROOM_ALREADY_STARTED`                                                      |
 | GET    | `/rooms/:roomId/game`              | `PlayerGameView`         | 403 (not a player), 404                                                         |
 | POST   | `/rooms/:roomId/game/play`         | `PlayerGameView`         | `409 NOT_YOUR_TURN`, `STALE_STATE`, `MATCH_FINISHED`; `400 INVALID_COMBINATION` |

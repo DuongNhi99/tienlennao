@@ -126,6 +126,8 @@ export function createApiDataSource(): GameDataSource {
       }),
     startMatch: (roomId) =>
       apiRequest(`${room(roomId)}/start`, { method: 'POST', schema: roomDetailSchema }),
+    rematch: (roomId) =>
+      apiRequest(`${room(roomId)}/rematch`, { method: 'POST', schema: roomIdResponseSchema }),
     leaveRoom: async (roomId) => {
       await apiRequest(`${room(roomId)}/leave`, { method: 'POST', schema: noContentSchema });
     },

@@ -2,6 +2,7 @@
 
 import type { MatchResult } from '@tienlen/shared';
 import { Crown } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { ButtonLink } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { UserAvatar } from '@/components/player/user-avatar';
@@ -13,11 +14,19 @@ interface MatchResultModalProps {
   result: MatchResult;
   myUserId: string | null;
   onClose: () => void;
+  /** The "play again" button, rendered next to "back to lobby". */
+  rematch?: ReactNode;
 }
 
 const PLACE = ['', 'Nhất', 'Nhì', 'Ba', 'Bét'];
 
-export function MatchResultModal({ open, result, myUserId, onClose }: MatchResultModalProps) {
+export function MatchResultModal({
+  open,
+  result,
+  myUserId,
+  onClose,
+  rematch,
+}: MatchResultModalProps) {
   const sorted = [...result.placements].sort((a, b) => a.placement - b.placement);
   const mine = sorted.find((p) => p.userId === myUserId);
   return (
@@ -27,9 +36,12 @@ export function MatchResultModal({ open, result, myUserId, onClose }: MatchResul
       title="Kết quả ván đấu"
       description={mine ? `Bạn về ${PLACE[mine.placement]!.toLowerCase()}.` : undefined}
       footer={
-        <ButtonLink href="/lobby" size="lg">
-          Về sảnh
-        </ButtonLink>
+        <>
+          <ButtonLink href="/lobby" size="lg" variant={rematch ? 'secondary' : undefined}>
+            Về sảnh
+          </ButtonLink>
+          {rematch}
+        </>
       }
     >
       <ol className="flex flex-col gap-2">

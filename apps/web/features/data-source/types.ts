@@ -66,6 +66,8 @@ export interface GameDataSource {
     settings: { entryFee: number; turnTimerSeconds: number },
   ): Promise<RoomDetail>;
   startMatch(roomId: string): Promise<RoomDetail>;
+  /** After a finished match: opens (or joins) the "play again" room. */
+  rematch(roomId: string): Promise<{ roomId: string }>;
   leaveRoom(roomId: string): Promise<void>;
 
   getGameView(roomId: string): Promise<PlayerGameView>;

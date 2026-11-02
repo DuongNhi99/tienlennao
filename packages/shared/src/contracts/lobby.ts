@@ -76,6 +76,8 @@ export const roomDetailSchema = roomSummarySchema.extend({
   seats: z.array(roomSeatSchema).length(PLAYERS_PER_MATCH),
   mySeat: seatIndexSchema.nullable(),
   matchId: z.uuid().nullable(),
+  /** After the match: the open "play again" room another player started, if any. */
+  rematchRoomId: z.uuid().nullable(),
 });
 export type RoomDetail = z.infer<typeof roomDetailSchema>;
 

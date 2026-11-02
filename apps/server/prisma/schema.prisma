@@ -261,10 +261,14 @@ model Room {
   createRequestId  String?        @db.VarChar(128)
   expiresAt        DateTime?
   closedAt         DateTime?
+  /// The room opened by "play again" after this room's match finished.
+  rematchRoomId    String?        @unique @db.Uuid
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
   host         User                   @relation("RoomHost", fields: [hostId], references: [id], onDelete: Restrict)
+  rematchRoom  Room?                  @relation("Rematch", fields: [rematchRoomId], references: [id], onDelete: SetNull)
+  rematchOf    Room?                  @relation("Rematch")
   ruleConfig   GameRuleConfiguration? @relation(fields: [ruleConfigId], references: [id], onDelete: Restrict)
   players      RoomPlayer[]
   matches      Match[]

@@ -213,6 +213,49 @@ describe('rooms', () => {
     expect(result.placements.map((p) => p.placement)).toEqual([1, 2]);
   });
 
+  it(
+    'lets the players of a finished match play again in a new room',
+    { timeout: 120_000 },
+    async () => {
+      const [host, guest, stranger] = await players(3);
+      const roomId = await createRoom(host!, { visibility: 'PRIVATE', password: 'banbe' });
+      await guest!.http.post(`${API}/rooms/${roomId}/join`).send({ password: 'banbe' }).expect(200);
+      for (const p of [host!, guest!])
+        await p.http.put(`${API}/rooms/${roomId}/ready`).send({ ready: true }).expect(200);
+      const early = await guest!.http.post(`${API}/rooms/${roomId}/rematch`).expect(403);
+      expect(errorCode(early.body)).toBe('FORBIDDEN');
+      await host!.http.post(`${API}/rooms/${roomId}/start`).expect(200);
+      const running = await guest!.http.post(`${API}/rooms/${roomId}/rematch`).expect(409);
+      expect(errorCode(running.body)).toBe('ROOM_ALREADY_STARTED');
+      await playToEnd([host!, guest!], roomId);
+      expect((await detail(guest!, roomId)).rematchRoomId).toBeNull();
+
+      // Only the match's players may ask; the first to ask hosts the new room.
+      await stranger!.http.post(`${API}/rooms/${roomId}/rematch`).expect(403);
+      const first = await guest!.http.post(`${API}/rooms/${roomId}/rematch`).expect(200);
+      const nextId = (first.body as { roomId: string }).roomId;
+      expect(nextId).not.toBe(roomId);
+      expect((await detail(host!, roomId)).rematchRoomId).toBe(nextId);
+      // Asking again is idempotent; the other player follows without the password.
+      await guest!.http.post(`${API}/rooms/${roomId}/rematch`).expect(200, { roomId: nextId });
+      await host!.http.post(`${API}/rooms/${roomId}/rematch`).expect(200, { roomId: nextId });
+
+      const next = await detail(host!, nextId);
+      expect(next).toMatchObject({
+        status: 'WAITING',
+        visibility: 'PRIVATE',
+        hasPassword: true,
+        hostId: (await detail(guest!, nextId)).seats[0]!.player!.userId,
+        matchId: null,
+      });
+      expect(next.seats.filter((s) => s.player)).toHaveLength(2);
+      for (const p of [host!, guest!])
+        await p.http.put(`${API}/rooms/${nextId}/ready`).send({ ready: true }).expect(200);
+      await guest!.http.post(`${API}/rooms/${nextId}/start`).expect(200);
+      expect((await view(host!, nextId)).myHand).toHaveLength(13);
+    },
+  );
+
   it('lets only the host change settings, which resets readiness', async () => {
     const [host, guest] = await players(2);
     const roomId = await createRoom(host!);

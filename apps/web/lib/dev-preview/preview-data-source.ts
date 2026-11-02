@@ -94,6 +94,7 @@ interface MockRoom {
   status: RoomStatus;
   seats: (MockSeat | null)[];
   matchId: string | null;
+  rematchRoomId: string | null;
 }
 
 interface MockGame {
@@ -164,6 +165,7 @@ function seedRooms(): MockRoom[] {
     turnTimerSeconds: 30,
     status: 'WAITING',
     matchId: null,
+    rematchRoomId: null,
     ...fields,
   });
   const [long, trang, bao, han, huy, ngoc, tung] = BOTS as [
@@ -428,6 +430,10 @@ export function createPreviewDataSource(): GameDataSource {
       turnTimerSeconds: room.turnTimerSeconds,
       mySeat: mySeat === -1 ? null : mySeat,
       matchId: room.matchId,
+      rematchRoomId: (() => {
+        const next = room.rematchRoomId ? rooms.get(room.rematchRoomId) : undefined;
+        return next && (next.status === 'WAITING' || next.status === 'READY') ? next.id : null;
+      })(),
       seats: room.seats.map((s, seatIndex) => ({
         seatIndex,
         player: s
@@ -736,6 +742,7 @@ export function createPreviewDataSource(): GameDataSource {
         status: 'WAITING',
         seats: [seat(ME), null, null, null],
         matchId: null,
+        rematchRoomId: null,
       };
       rooms.set(room.id, room);
       createRequests.set(request.requestId, room.id);
@@ -807,6 +814,36 @@ export function createPreviewDataSource(): GameDataSource {
       emit({ type: 'room', roomId });
       emit({ type: 'rooms' });
       return toDetail(room);
+    },
+
+    async rematch(roomId) {
+      await delay(LATENCY_MS);
+      const previous = getRoomOrThrow(roomId);
+      const game = games.get(roomId);
+      if (!game || mySeatInGame(game) === -1) throw new ApiError('FORBIDDEN', 403);
+      if (previous.status !== 'FINISHED') throw new ApiError('ROOM_ALREADY_STARTED', 409);
+      const linked = previous.rematchRoomId ? rooms.get(previous.rematchRoomId) : undefined;
+      if (linked && mySeatIn(linked) !== -1) return { roomId: linked.id };
+      if (currentRoom()) throw new ApiError('ALREADY_IN_ROOM', 409);
+      if (user.balance < previous.entryFee) throw new ApiError('INSUFFICIENT_COINS', 409);
+      // As on the server, a new room on the same terms. The preview's bots always want another
+      // round, so they are already seated and ready.
+      const next: MockRoom = {
+        ...previous,
+        id: crypto.randomUUID(),
+        code: randomCode(),
+        hostId: ME.userId,
+        status: 'WAITING',
+        seats: game.players.map((p) => (p.userId === ME.userId ? seat(ME) : seat(p, true))),
+        matchId: null,
+        rematchRoomId: null,
+      };
+      rooms.set(next.id, next);
+      previous.rematchRoomId = next.id;
+      refreshReadiness(next);
+      emit({ type: 'room', roomId });
+      emit({ type: 'rooms' });
+      return { roomId: next.id };
     },
 
     async leaveRoom(roomId) {
@@ -901,6 +938,7 @@ export function createPreviewDataSource(): GameDataSource {
           // Quick-match seats are reserved as ready; the bot host starts automatically.
           seats: [seat(a, true), seat(ME, true), seat(b, true), seat(c, true)],
           matchId: null,
+          rematchRoomId: null,
         };
         rooms.set(room.id, room);
         refreshReadiness(room);

@@ -132,6 +132,17 @@ export class RoomsController {
     return this.rooms.detail(roomId, user.id);
   }
 
+  @Post(':roomId/rematch')
+  @HttpCode(HttpStatus.OK)
+  async rematch(
+    @CurrentUser() user: SessionUser,
+    @Param('roomId', roomIdPipe) roomId: string,
+  ): Promise<{ roomId: string }> {
+    await this.limit(user);
+    await this.matchmaking.leaveQueue(user.id);
+    return this.rooms.rematch(user.id, roomId);
+  }
+
   @Post(':roomId/leave')
   @HttpCode(HttpStatus.NO_CONTENT)
   async leave(

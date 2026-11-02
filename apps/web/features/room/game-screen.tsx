@@ -11,7 +11,8 @@ import {
   type RoomDetail,
   sortCards,
 } from '@tienlen/shared';
-import { ArrowUpDown, Trophy, X } from 'lucide-react';
+import { ArrowUpDown, RotateCcw, Trophy, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { CardHand } from '@/components/game/card-hand';
 import { CurrentTrick } from '@/components/game/current-trick';
@@ -19,7 +20,7 @@ import { GameTable } from '@/components/game/game-table';
 import { MatchResultModal } from '@/components/game/match-result-modal';
 import { PlayerSeat } from '@/components/game/player-seat';
 import { TurnIndicator } from '@/components/game/turn-indicator';
-import { Button, ButtonLink } from '@/components/ui/button';
+import { Button, ButtonLink, type ButtonSize } from '@/components/ui/button';
 import { QueryErrorState, LoadingSkeleton } from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
@@ -35,6 +36,7 @@ import { showToast } from '@/lib/toast-store';
 export function GameScreen({ room }: { room: RoomDetail }) {
   const source = useDataSource();
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [selection, setSelection] = useState<ReadonlySet<CardId>>(new Set());
   const [sortMode, setSortMode] = useState<CardSortMode>('rank');
   const [resultDismissed, setResultDismissed] = useState(false);
@@ -80,6 +82,11 @@ export function GameScreen({ room }: { room: RoomDetail }) {
       }),
     onSuccess: (view) => queryClient.setQueryData(queryKeys.game(room.id), view),
     onError: onActionError,
+  });
+  const rematch = useMutation({
+    mutationFn: () => source.rematch(room.id),
+    onSuccess: ({ roomId }) => router.push(`/room/${roomId}`),
+    onError: (error) => showToast(errorMessage(error), { variant: 'error' }),
   });
 
   if (game.isPending) {
@@ -142,6 +149,17 @@ export function GameScreen({ room }: { room: RoomDetail }) {
     setSelection(next);
   };
   const clearSelection = () => setSelection(new Set());
+  // Another player may already have opened the next room; the server seats us there either way.
+  const rematchButton = (size?: ButtonSize) => (
+    <Button
+      size={size}
+      icon={<RotateCcw aria-hidden className="size-5" />}
+      loading={rematch.isPending || rematch.isSuccess}
+      onClick={() => rematch.mutate()}
+    >
+      {room.rematchRoomId ? 'Vào bàn chơi tiếp' : 'Chơi tiếp'}
+    </Button>
+  );
 
   return (
     <>
@@ -177,7 +195,9 @@ export function GameScreen({ room }: { room: RoomDetail }) {
         actions={
           finished ? (
             <div className="flex flex-wrap items-center justify-center gap-2">
+              {rematchButton()}
               <Button
+                variant="secondary"
                 icon={<Trophy aria-hidden className="size-5" />}
                 onClick={() => setResultDismissed(false)}
               >
@@ -248,6 +268,7 @@ export function GameScreen({ room }: { room: RoomDetail }) {
           result={result.data}
           myUserId={me.userId}
           onClose={() => setResultDismissed(true)}
+          rematch={rematchButton('lg')}
         />
       ) : null}
     </>

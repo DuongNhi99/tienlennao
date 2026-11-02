@@ -57,6 +57,7 @@ const roomInclude = {
       players: { orderBy: { seatIndex: 'asc' }, include: { user: { select: playerSelect } } },
     },
   },
+  rematchRoom: { select: { id: true, status: true } },
 } satisfies Prisma.RoomInclude;
 type RoomRecord = Prisma.RoomGetPayload<{ include: typeof roomInclude }>;
 
@@ -250,17 +251,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.prisma.$transaction(async (tx) => {
         await lockRoom(tx, roomId);
-        const current = await tx.room.findUniqueOrThrow({
-          where: { id: roomId },
-          include: { players: true },
-        });
-        if (!JOINABLE_STATUSES.includes(current.status)) throw roomError.started();
-        const taken = new Set(current.players.map((p) => p.seatIndex));
-        const seatIndex = [0, 1, 2, 3].find((index) => !taken.has(index));
-        if (seatIndex === undefined) throw new AppException('ROOM_FULL', HttpStatus.CONFLICT);
-        await tx.roomPlayer.create({ data: { roomId, userId, seatIndex } });
-        await tx.room.update({ where: { id: roomId }, data: { expiresAt: this.expiry() } });
-        await this.refreshStatus(tx, roomId);
+        await this.takeSeat(tx, roomId, userId);
       });
     } catch (error) {
       if (isUniqueViolation(error, 'userId')) throw roomError.alreadyInRoom();
@@ -268,6 +259,90 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     }
     await this.notify(roomId, room.visibility === 'PUBLIC');
     return { roomId };
+  }
+
+  /**
+   * "Play again" after a finished match. A finished room is never reused (ROOM_TRANSITIONS),
+   * so the first of its players to ask opens a new room on the same terms and hosts it; the
+   * others are seated there when they ask, without the private-room password. If that room
+   * has started, filled up or closed in the meantime, the next player to ask opens another.
+   */
+  async rematch(userId: string, roomId: string): Promise<{ roomId: string }> {
+    const previous = await this.prisma.room.findUnique({
+      where: { id: roomId },
+      select: {
+        status: true,
+        visibility: true,
+        entryFee: true,
+        rematchRoomId: true,
+        matches: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { players: { select: { userId: true } } },
+        },
+      },
+    });
+    if (!previous) throw roomError.notFound();
+    const matchPlayerIds = previous.matches[0]?.players.map((p) => p.userId) ?? [];
+    if (!matchPlayerIds.includes(userId)) throw roomError.forbidden();
+    // FINISHED is terminal, so this holds for the rest of the request.
+    if (previous.status !== 'FINISHED') {
+      throw OPEN_STATUSES.includes(previous.status) ? roomError.started() : roomError.notFound();
+    }
+    const seat = await this.prisma.roomPlayer.findUnique({ where: { userId } });
+    if (seat && seat.roomId === previous.rematchRoomId) return { roomId: seat.roomId };
+    if (seat) throw roomError.alreadyInRoom();
+    await this.assertBalance(userId, previous.entryFee);
+    const preset = await this.presets.active();
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const target = await this.prisma.$transaction(async (tx) => {
+          await lockRoom(tx, roomId);
+          const room = await tx.room.findUniqueOrThrow({ where: { id: roomId } });
+
+          if (room.rematchRoomId && (await lockRoom(tx, room.rematchRoomId))) {
+            const linked = await tx.room.findUniqueOrThrow({
+              where: { id: room.rematchRoomId },
+              include: { players: true },
+            });
+            if (
+              JOINABLE_STATUSES.includes(linked.status) &&
+              linked.players.length < PLAYERS_PER_MATCH
+            ) {
+              await this.takeSeat(tx, linked.id, userId);
+              return linked.id;
+            }
+          }
+
+          this.presets.assertAllowed(preset.options, room.entryFee, room.turnTimerSeconds);
+          const created = await tx.room.create({
+            data: {
+              code: randomRoomCode(),
+              name: room.name,
+              hostId: userId,
+              visibility: room.visibility,
+              passwordHash: room.passwordHash,
+              entryFee: room.entryFee,
+              turnTimerSeconds: room.turnTimerSeconds,
+              ruleConfigId: preset.id,
+              expiresAt: this.expiry(),
+              players: { create: { userId, seatIndex: 0 } },
+            },
+          });
+          await tx.room.update({ where: { id: roomId }, data: { rematchRoomId: created.id } });
+          return created.id;
+        });
+        await this.notify(target, previous.visibility === 'PUBLIC');
+        // The other players' result screens offer to follow into the new room.
+        this.realtime.roomUpdated(roomId, matchPlayerIds);
+        return { roomId: target };
+      } catch (error) {
+        if (isUniqueViolation(error, 'userId')) throw roomError.alreadyInRoom();
+        if (isUniqueViolation(error, 'code') && attempt < 5) continue;
+        throw error;
+      }
+    }
   }
 
   async setReady(userId: string, roomId: string, ready: boolean): Promise<RoomDetail> {
@@ -466,6 +541,10 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
       turnTimerSeconds: room.turnTimerSeconds,
       mySeat,
       matchId: match?.id ?? null,
+      rematchRoomId:
+        room.rematchRoom && JOINABLE_STATUSES.includes(room.rematchRoom.status)
+          ? room.rematchRoom.id
+          : null,
       seats: [0, 1, 2, 3].map((seatIndex) => {
         const occupant = occupants.find((o) => o.seatIndex === seatIndex);
         return {
@@ -491,6 +570,25 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     });
     if (!OPEN_STATUSES.includes(room.status)) throw roomError.notFound();
     return room;
+  }
+
+  /** Seats a user in the first free seat of a joinable room. The caller holds the room lock. */
+  private async takeSeat(
+    tx: Prisma.TransactionClient,
+    roomId: string,
+    userId: string,
+  ): Promise<void> {
+    const room = await tx.room.findUniqueOrThrow({
+      where: { id: roomId },
+      include: { players: true },
+    });
+    if (!JOINABLE_STATUSES.includes(room.status)) throw roomError.started();
+    const taken = new Set(room.players.map((p) => p.seatIndex));
+    const seatIndex = [0, 1, 2, 3].find((index) => !taken.has(index));
+    if (seatIndex === undefined) throw new AppException('ROOM_FULL', HttpStatus.CONFLICT);
+    await tx.roomPlayer.create({ data: { roomId, userId, seatIndex } });
+    await tx.room.update({ where: { id: roomId }, data: { expiresAt: this.expiry() } });
+    await this.refreshStatus(tx, roomId);
   }
 
   /**
