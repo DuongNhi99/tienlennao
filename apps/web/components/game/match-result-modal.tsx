@@ -45,7 +45,7 @@ export function MatchResultModal({
         </>
       }
     >
-      <ol className="flex flex-col gap-2">
+      <ol aria-label="Thứ hạng" className="flex flex-col gap-2">
         {sorted.map((p) => (
           <li
             key={p.userId}

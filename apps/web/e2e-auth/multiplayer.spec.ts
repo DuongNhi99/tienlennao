@@ -129,7 +129,9 @@ test('a browser player plays a full match against three API clients', async ({ p
   }
 
   await botsDone;
-  await expect(result.getByRole('listitem')).toHaveCount(4);
+  await expect(result.getByRole('list', { name: 'Thứ hạng' }).locator('> li')).toHaveCount(4);
+  // Last place still held cards: they are revealed under that player's row.
+  await expect(result.getByRole('list', { name: /^Bài còn lại của/ }).first()).toBeVisible();
   await Promise.all(bots.map((bot) => bot.dispose()));
 
   // The match is in the history, with its public timeline, and the result was notified.
