@@ -4,6 +4,7 @@ import { useSyncExternalStore } from 'react';
 import {
   canPromptInstall,
   dismissInstallBanner,
+  isAndroidDevice,
   isInstallBannerDismissed,
   isIosDevice,
   isStandalone,
@@ -11,7 +12,7 @@ import {
   subscribeInstall,
 } from '@/lib/pwa/install-store';
 
-export type InstallMode = 'hidden' | 'prompt' | 'ios-instructions';
+export type InstallMode = 'hidden' | 'prompt' | 'ios-instructions' | 'android-instructions';
 
 function subscribe(callback: () => void) {
   const unsubscribe = subscribeInstall(callback);
@@ -27,6 +28,7 @@ function getMode(): InstallMode {
   if (isStandalone() || isInstallBannerDismissed()) return 'hidden';
   if (canPromptInstall()) return 'prompt';
   if (isIosDevice()) return 'ios-instructions';
+  if (isAndroidDevice()) return 'android-instructions';
   return 'hidden';
 }
 

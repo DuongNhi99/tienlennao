@@ -60,6 +60,14 @@ export function isIosDevice(): boolean {
   );
 }
 
+/**
+ * Android browsers that never fire `beforeinstallprompt` (Firefox, in-app browsers, plain-HTTP
+ * origins) or have not fired it yet still offer "Add to Home screen" from their menu.
+ */
+export function isAndroidDevice(): boolean {
+  return /android/i.test(navigator.userAgent);
+}
+
 /** Dismissal is a non-sensitive UI preference, so localStorage is appropriate. */
 export function isInstallBannerDismissed(): boolean {
   try {

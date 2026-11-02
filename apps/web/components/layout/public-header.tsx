@@ -7,10 +7,11 @@ export function PublicHeader() {
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-2 sm:px-6">
         <Logo />
         <nav aria-label="Tài khoản" className="flex items-center gap-2">
-          <ButtonLink href="/login" variant="ghost" size="md">
+          <ButtonLink href="/login" variant="ghost" size="md" className="whitespace-nowrap">
             Đăng nhập
           </ButtonLink>
-          <ButtonLink href="/register" size="md" className="hidden min-[400px]:inline-flex">
+          {/* A variant, not `hidden`: `cn` does not merge, so `hidden` loses to the base `inline-flex`. */}
+          <ButtonLink href="/register" size="md" className="whitespace-nowrap max-[399px]:hidden">
             Đăng ký
           </ButtonLink>
         </nav>

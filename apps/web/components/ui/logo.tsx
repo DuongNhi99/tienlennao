@@ -55,7 +55,7 @@ export function Logo({ href = '/', className }: { href?: string; className?: str
       className={cn('inline-flex min-h-11 items-center gap-2 font-bold tracking-tight', className)}
     >
       <LogoMark />
-      <span className="text-lg">
+      <span className="whitespace-nowrap text-lg">
         Tiến Lên <span className="text-gold-400">Online</span>
       </span>
     </Link>

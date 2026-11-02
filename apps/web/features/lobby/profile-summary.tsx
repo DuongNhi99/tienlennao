@@ -43,9 +43,10 @@ export function ProfileSummary() {
         <p className="truncate text-lg font-semibold">Xin chào, {displayName}!</p>
         <dl className="mt-1 grid grid-cols-3 gap-2 text-sm">
           {stats.map((stat) => (
-            <div key={stat.label}>
+            // Labels may wrap on narrow phones; values stay on one baseline.
+            <div key={stat.label} className="flex flex-col">
               <dt className="text-white/60">{stat.label}</dt>
-              <dd className="font-semibold tabular-nums">{stat.value}</dd>
+              <dd className="mt-auto font-semibold tabular-nums">{stat.value}</dd>
             </div>
           ))}
         </dl>

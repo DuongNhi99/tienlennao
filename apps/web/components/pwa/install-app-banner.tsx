@@ -1,6 +1,6 @@
 'use client';
 
-import { Download, Share, X } from 'lucide-react';
+import { Download, EllipsisVertical, Share, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePwaInstall } from '@/hooks/use-pwa-install';
 import { cn } from '@/lib/cn';
@@ -23,6 +23,12 @@ export function InstallAppBanner({ className }: { className?: string }) {
         <p className="font-semibold">Cài Tiến Lên Online lên thiết bị</p>
         {mode === 'prompt' ? (
           <p className="text-white/75">Mở nhanh từ màn hình chính, hiển thị toàn màn hình.</p>
+        ) : mode === 'android-instructions' ? (
+          <p className="text-white/75">
+            Mở menu trình duyệt{' '}
+            <EllipsisVertical aria-label="Menu" className="inline size-4 align-text-bottom" />,
+            rồi chọn <strong>Cài đặt ứng dụng</strong> hoặc <strong>Thêm vào MH chính</strong>.
+          </p>
         ) : (
           <p className="text-white/75">
             Trên iPhone/iPad: nhấn{' '}

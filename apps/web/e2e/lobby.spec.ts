@@ -15,6 +15,21 @@ test('lobby shows preview banner, balance, rooms, rewards, and leaderboard', asy
   await snap(page, testInfo, 'lobby');
 });
 
+test('install banner is offered on Android and can be dismissed', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-360', 'Pixel 5 is the Android project');
+  await page.goto('/lobby');
+  const banner = page.getByRole('region', { name: 'Cài đặt ứng dụng' });
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText('Thêm vào MH chính');
+  await expectNoHorizontalOverflow(page);
+  await snap(page, testInfo, 'lobby-install-banner');
+  await banner.getByRole('button', { name: 'Ẩn gợi ý cài đặt' }).click();
+  await expect(banner).toBeHidden();
+  await page.reload();
+  await expect(page.getByText('Xin chào, Minh Anh!')).toBeVisible();
+  await expect(banner).toBeHidden();
+});
+
 test('room filters are applied', async ({ page }) => {
   await page.goto('/lobby');
   await expect(page.getByRole('heading', { name: 'Giải trí cuối tuần' })).toBeVisible();

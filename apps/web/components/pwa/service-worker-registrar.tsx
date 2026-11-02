@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect } from 'react';
+// Loaded from the root layout so `beforeinstallprompt` is captured on whichever page fires it,
+// not only once a page containing the install banner has loaded.
+import '@/lib/pwa/install-store';
 import { showToast } from '@/lib/toast-store';
 
 /**
