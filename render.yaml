@@ -28,9 +28,12 @@ services:
           type: keyvalue
           name: tienlen-redis
           property: connectionString
-      # Browser → Vercel → Render's load balancer → API.
+      # Browser → Vercel → Cloudflare → Render's proxy → API. X-Forwarded-For arrives as
+      # "client, vercel, cloudflare, render" (measured), so the client is 4 trusted hops back.
+      # Requests sent straight to the onrender.com address could choose their own IP; players
+      # only use the Vercel address.
       - key: TRUST_PROXY
-        value: '2'
+        value: '4'
 
   - type: keyvalue
     name: tienlen-redis
