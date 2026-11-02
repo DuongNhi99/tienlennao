@@ -26,8 +26,8 @@ export function InstallAppBanner({ className }: { className?: string }) {
         ) : mode === 'android-instructions' ? (
           <p className="text-white/75">
             Mở menu trình duyệt{' '}
-            <EllipsisVertical aria-label="Menu" className="inline size-4 align-text-bottom" />,
-            rồi chọn <strong>Cài đặt ứng dụng</strong> hoặc <strong>Thêm vào MH chính</strong>.
+            <EllipsisVertical aria-label="Menu" className="inline size-4 align-text-bottom" />, rồi
+            chọn <strong>Cài đặt ứng dụng</strong> hoặc <strong>Thêm vào MH chính</strong>.
           </p>
         ) : (
           <p className="text-white/75">
