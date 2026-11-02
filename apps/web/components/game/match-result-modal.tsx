@@ -7,6 +7,7 @@ import { ButtonLink } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { UserAvatar } from '@/components/player/user-avatar';
 import { cn } from '@/lib/cn';
+import { RevealedCards } from './revealed-cards';
 import { formatCoinDelta } from '@/lib/format';
 
 interface MatchResultModalProps {
@@ -49,7 +50,7 @@ export function MatchResultModal({
           <li
             key={p.userId}
             className={cn(
-              'flex items-center gap-3 rounded-xl px-3 py-2',
+              'flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-3 py-2',
               p.userId === myUserId ? 'bg-gold-400/15 ring-1 ring-gold-400/60' : 'bg-white/5',
             )}
           >
@@ -60,11 +61,13 @@ export function MatchResultModal({
               {PLACE[p.placement]}
             </span>
             <UserAvatar name={p.displayName} userId={p.userId} avatarUrl={p.avatarUrl} size="sm" />
-            <span className="min-w-0 flex-1 truncate">
-              {p.displayName}
-              {p.userId === myUserId ? <span className="text-white/60"> (bạn)</span> : null}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">
+                {p.displayName}
+                {p.userId === myUserId ? <span className="text-white/60"> (bạn)</span> : null}
+              </span>
+              <span className="block text-xs text-white/60">còn {p.cardsRemaining} lá</span>
             </span>
-            <span className="text-xs text-white/60">còn {p.cardsRemaining} lá</span>
             <span
               className={cn(
                 'w-20 text-right font-semibold tabular-nums',
@@ -77,6 +80,13 @@ export function MatchResultModal({
             >
               {formatCoinDelta(p.coinDelta)} xu
             </span>
+            {p.remainingCards.length ? (
+              <RevealedCards
+                cards={p.remainingCards}
+                label={`Bài còn lại của ${p.userId === myUserId ? 'bạn' : p.displayName}: ${p.remainingCards.length} lá`}
+                className="basis-full justify-center [--card-w:1.75rem] sm:[--card-w:2rem]"
+              />
+            ) : null}
           </li>
         ))}
       </ol>

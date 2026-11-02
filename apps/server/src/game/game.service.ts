@@ -336,6 +336,8 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
 
     const { engine, turnDeadline } = readSnapshot(match.stateSnapshot);
     const finished = match.status !== 'PLAYING';
+    // Leftover hands are shown face up after a normal finish, never during play or on abort.
+    const reveal = match.status === 'FINISHED';
     const disconnected = new Set(
       match.room.players.filter((p) => p.disconnectedAt !== null).map((p) => p.userId),
     );
@@ -356,6 +358,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
           hasPassed: engine.passed[p.seatIndex],
           finishedPlace: finished ? p.placement : finishIndex === -1 ? null : finishIndex + 1,
           connected: !disconnected.has(p.userId),
+          revealedCards: reveal ? engine.hands[p.seatIndex] : null,
         };
       }),
       currentTrick: engine.table
@@ -379,6 +382,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     if (!match.players.some((p) => p.userId === userId)) {
       throw new AppException('FORBIDDEN', HttpStatus.FORBIDDEN);
     }
+    const { engine } = readSnapshot(match.stateSnapshot);
     return {
       matchId: match.id,
       placements: match.players.map((p) => ({
@@ -386,6 +390,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
         seatIndex: p.seatIndex,
         placement: p.placement!,
         cardsRemaining: p.cardsRemaining ?? 0,
+        remainingCards: engine.hands[p.seatIndex]!,
         coinDelta: p.coinDelta ?? 0,
       })),
     };

@@ -450,6 +450,14 @@ describe('a complete match between four independent clients', () => {
       );
       expect(result.placements.map((p) => p.placement)).toEqual([1, 2, 3, 4]);
       expect(result.placements.every((p) => p.coinDelta === 0)).toBe(true);
+      // Once finished, every leftover hand is revealed to everyone, in the view and the result.
+      const finalHands = (await storedState(roomId)).hands;
+      expect(current.seats.map((s) => s.revealedCards)).toEqual(finalHands);
+      for (const p of result.placements) {
+        expect(p.remainingCards).toEqual(finalHands[p.seatIndex]);
+        expect(p.remainingCards).toHaveLength(p.cardsRemaining);
+      }
+      expect(result.placements[3]!.remainingCards.length).toBeGreaterThan(0);
       const winner = result.placements[0]!.userId;
       const profiles = await ctx.prisma.userProfile.findMany({
         where: { userId: { in: table.map((p) => p.userId) } },

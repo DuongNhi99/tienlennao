@@ -597,6 +597,7 @@ export function createPreviewDataSource(): GameDataSource {
         seatIndex,
         placement: i + 1,
         cardsRemaining: game.hands[seatIndex]!.length,
+        remainingCards: game.hands[seatIndex]!,
         coinDelta: payout - room.entryFee,
       };
     });
@@ -616,12 +617,15 @@ export function createPreviewDataSource(): GameDataSource {
         finishedAt: new Date().toISOString(),
         durationSeconds: Math.round((Date.now() - game.startedAt) / 1000),
         mySeat: mySeatInGame(game),
-        players: placements.map(({ placement, cardsRemaining, coinDelta, ...player }) => ({
-          ...player,
-          placement,
-          cardsRemaining,
-          coinDelta,
-        })),
+        // History keeps only the leftover count, as the real server does.
+        players: placements.map(
+          ({ placement, cardsRemaining, remainingCards: _, coinDelta, ...player }) => ({
+            ...player,
+            placement,
+            cardsRemaining,
+            coinDelta,
+          }),
+        ),
         // The preview does not record moves; the real server keeps the full public timeline.
         timeline: [],
       });
@@ -666,6 +670,7 @@ export function createPreviewDataSource(): GameDataSource {
         hasPassed: game.passed[seatIndex],
         finishedPlace: game.finishedPlace[seatIndex],
         connected: true,
+        revealedCards: game.status === 'FINISHED' ? game.hands[seatIndex] : null,
       })),
       currentTrick: game.currentTrick,
       turnSeat: game.status === 'PLAYING' ? game.turnSeat : null,

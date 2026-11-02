@@ -22,6 +22,11 @@ export const gameSeatSchema = publicPlayerSchema.extend({
   /** 1-based finishing position once the player has emptied their hand. */
   finishedPlace: z.number().int().min(1).max(PLAYERS_PER_MATCH).nullable(),
   connected: z.boolean(),
+  /**
+   * The cards this player still held when the match finished, face up for everyone. Null while
+   * the match is being played (opponents' hands stay private) and for aborted matches.
+   */
+  revealedCards: z.array(cardIdSchema).max(CARDS_PER_PLAYER).nullable(),
 });
 export type GameSeat = z.infer<typeof gameSeatSchema>;
 
@@ -60,6 +65,8 @@ export const matchResultSchema = z.object({
         seatIndex: seatIndexSchema,
         placement: z.number().int().min(1).max(PLAYERS_PER_MATCH),
         cardsRemaining: z.number().int().min(0).max(CARDS_PER_PLAYER),
+        /** The cards behind `cardsRemaining`, revealed once the match has finished. */
+        remainingCards: z.array(cardIdSchema).max(CARDS_PER_PLAYER),
         coinDelta: z.number().int(),
       }),
     )
