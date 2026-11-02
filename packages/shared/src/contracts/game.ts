@@ -25,8 +25,9 @@ export const gameSeatSchema = publicPlayerSchema.extend({
   /**
    * The cards this player still held when the match finished, face up for everyone. Null while
    * the match is being played (opponents' hands stay private) and for aborted matches.
+   * Optional so the web app keeps working while an older API (deployed separately) is still live.
    */
-  revealedCards: z.array(cardIdSchema).max(CARDS_PER_PLAYER).nullable(),
+  revealedCards: z.array(cardIdSchema).max(CARDS_PER_PLAYER).nullable().default(null),
 });
 export type GameSeat = z.infer<typeof gameSeatSchema>;
 
@@ -65,8 +66,11 @@ export const matchResultSchema = z.object({
         seatIndex: seatIndexSchema,
         placement: z.number().int().min(1).max(PLAYERS_PER_MATCH),
         cardsRemaining: z.number().int().min(0).max(CARDS_PER_PLAYER),
-        /** The cards behind `cardsRemaining`, revealed once the match has finished. */
-        remainingCards: z.array(cardIdSchema).max(CARDS_PER_PLAYER),
+        /**
+         * The cards behind `cardsRemaining`, revealed once the match has finished. Optional, like
+         * `revealedCards`, for an older API.
+         */
+        remainingCards: z.array(cardIdSchema).max(CARDS_PER_PLAYER).default([]),
         coinDelta: z.number().int(),
       }),
     )
