@@ -113,6 +113,13 @@ for example [Brevo](https://www.brevo.com) (300 emails a day free):
 
 - **Updates**: push to `main`. Vercel and Render both rebuild automatically (the API applies
   database migrations when it starts).
+- **API not updating** (Render still runs an old commit after a push): Render → `tienlen-api`
+  → **Manual Deploy** → **Deploy latest commit**. To make it automatic, copy the **Deploy
+  Hook** URL from Render → `tienlen-api` → **Settings**, then in GitHub → Settings → Secrets
+  and variables → Actions add the secret `RENDER_DEPLOY_HOOK_URL` (that URL) and the variable
+  `RENDER_DEPLOY_ENABLED` = `true`. The "Deploy API (Render)" workflow then triggers Render
+  after every green CI run on `main` (switch Render's own **Auto-Deploy** off to avoid
+  building twice).
 - **Avatars** are stored on the API's disk, which Render's free plan wipes on every redeploy
   or restart: uploaded pictures disappear then (players can upload again).
 - **Backups**: Supabase's free plan has no downloadable backups. Occasionally run
