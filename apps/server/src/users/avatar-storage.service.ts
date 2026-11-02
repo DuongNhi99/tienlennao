@@ -1,17 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import type { Prisma } from '@prisma/client';
 import sharp from 'sharp';
 import { AppException } from '../common/errors/app.exception';
-import type { Env } from '../config/env';
+import { PrismaService } from '../prisma/prisma.service';
 
 const AVATAR_SIZE = 256;
 /** Rejects decompression bombs before decoding the full image. */
 const MAX_INPUT_PIXELS = 4096 * 4096;
 const ACCEPTED_FORMATS = new Set(['png', 'jpeg', 'webp']);
-const STORED_NAME = /^[0-9a-f-]{36}\.webp$/;
+/** Strict UUID shape: anything else would make the uuid column lookup throw. */
+const STORED_NAME = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.webp$/;
 
 const invalidImage = () =>
   new AppException('VALIDATION_ERROR', HttpStatus.BAD_REQUEST, [
@@ -19,26 +18,22 @@ const invalidImage = () =>
   ]);
 
 /**
- * Stores avatars on local disk. Every upload is decoded and re-encoded as a 256×256 WebP, so
- * only pixels survive: metadata, embedded scripts or polyglot payloads are discarded, and the
- * stored name is random (never derived from user input).
+ * Stores avatars in the database (`avatar_images`), so they survive redeploys on hosts without
+ * persistent disks. Every upload is decoded and re-encoded as a 256×256 WebP, so only pixels
+ * survive: metadata, embedded scripts or polyglot payloads are discarded, and the stored name is
+ * random (never derived from user input).
  */
 @Injectable()
 export class AvatarStorageService {
-  private readonly dir: string;
+  constructor(private readonly prisma: PrismaService) {}
 
-  constructor(config: ConfigService<Env, true>) {
-    this.dir = path.resolve(config.get('UPLOAD_DIR', { infer: true }), 'avatars');
-  }
-
-  /** Validates the actual file content (not the declared type) and returns the stored name. */
-  async save(input: Buffer): Promise<string> {
-    let output: Buffer;
+  /** Validates the actual file content (not the declared type) and returns the WebP bytes. */
+  async encode(input: Buffer): Promise<Buffer> {
     try {
       const image = sharp(input, { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'error' });
       const { format } = await image.metadata();
       if (!format || !ACCEPTED_FORMATS.has(format)) throw invalidImage();
-      output = await image
+      return await image
         .rotate() // apply EXIF orientation before the metadata is dropped
         .resize(AVATAR_SIZE, AVATAR_SIZE, { fit: 'cover' })
         .webp({ quality: 82 })
@@ -47,19 +42,33 @@ export class AvatarStorageService {
       if (error instanceof AppException) throw error;
       throw invalidImage();
     }
-    const name = `${randomUUID()}.webp`;
-    await mkdir(this.dir, { recursive: true });
-    await writeFile(path.join(this.dir, name), output);
-    return name;
   }
 
-  async remove(name: string): Promise<void> {
-    const file = this.resolve(name);
-    if (file) await unlink(file).catch(() => undefined);
+  /** Stores encoded bytes for a user and returns the stored name. */
+  async save(tx: Prisma.TransactionClient, userId: string, webp: Buffer): Promise<string> {
+    const id = randomUUID();
+    await tx.avatarImage.create({ data: { id, userId, data: new Uint8Array(webp) } });
+    return `${id}.webp`;
   }
 
-  /** Absolute path for a stored name, or null if the name is not one we generate. */
-  resolve(name: string): string | null {
-    return STORED_NAME.test(name) ? path.join(this.dir, name) : null;
+  async remove(tx: Prisma.TransactionClient, name: string): Promise<void> {
+    const id = this.idOf(name);
+    if (id) await tx.avatarImage.deleteMany({ where: { id } });
+  }
+
+  /** The WebP bytes for a stored name, or null if there is no such avatar. */
+  async load(name: string): Promise<Buffer | null> {
+    const id = this.idOf(name);
+    if (!id) return null;
+    const image = await this.prisma.avatarImage.findUnique({
+      where: { id },
+      select: { data: true },
+    });
+    return image ? Buffer.from(image.data) : null;
+  }
+
+  /** The image id for a stored name, or null if the name is not one we generate. */
+  private idOf(name: string): string | null {
+    return STORED_NAME.exec(name)?.[1] ?? null;
   }
 }

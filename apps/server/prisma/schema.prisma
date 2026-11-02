@@ -63,6 +63,7 @@ model User {
   hostedRooms             Room[]                   @relation("RoomHost")
   roomSeat                RoomPlayer?
   matchmakingEntry        MatchmakingEntry?
+  avatarImages            AvatarImage[]
   matchPlayers            MatchPlayer[]
   rewardClaims            RewardClaim[]
   achievements            UserAchievement[]
@@ -95,6 +96,21 @@ model UserProfile {
 
   @@index([displayName])
   @@map("user_profiles")
+}
+
+/// Uploaded avatars: 256×256 WebP, about 10–20 KB each. Kept in the database rather than on disk
+/// so they survive redeploys on hosts without persistent storage and every API instance sees them.
+/// `UserProfile.avatarUrl` references one as "<id>.webp".
+model AvatarImage {
+  id        String   @id @db.Uuid
+  userId    String   @db.Uuid
+  data      Bytes
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("avatar_images")
 }
 
 model OAuthAccount {

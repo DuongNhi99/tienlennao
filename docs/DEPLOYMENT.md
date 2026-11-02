@@ -76,11 +76,10 @@ To grow beyond one server, move PostgreSQL to a managed service and follow secti
 | Component  | Image / service                  | Notes                                                                      |
 | ---------- | -------------------------------- | -------------------------------------------------------------------------- |
 | Web        | `apps/web/Dockerfile`            | Next.js standalone server, port 3000. Stateless.                           |
-| API        | `apps/server/Dockerfile`         | NestJS REST + Socket.IO, port 4000. Stateless apart from avatar files.     |
+| API        | `apps/server/Dockerfile`         | NestJS REST + Socket.IO, port 4000. Stateless.                             |
 | Migrations | same image as the API            | One-off job before each release: `prisma migrate deploy`, then the seed.   |
-| PostgreSQL | managed service or `postgres:17` | The only source of truth: accounts, rooms, matches, ledger, queue.         |
+| PostgreSQL | managed service or `postgres:17` | The only source of truth: accounts, rooms, matches, ledger, avatars.       |
 | Redis      | managed service or `redis:7`     | Rate limits and Socket.IO fan-out between API instances. Not durable data. |
-| Avatars    | volume at `UPLOAD_DIR`           | Shared storage when there is more than one API instance.                   |
 
 `pnpm app:up` (Docker Compose, profile `app`) starts exactly this set locally: PostgreSQL,
 Redis, the migration job, the API and the web app on <http://localhost:3000>.
@@ -155,7 +154,6 @@ API (see the README for every variable and default):
 - [ ] `SOCKET_IO_REDIS_ADAPTER=true` — whenever there is more than one API instance.
 - [ ] `WEB_ORIGIN`, `WEB_APP_URL`, `API_PUBLIC_URL`, `TRUST_PROXY`, `COOKIE_DOMAIN` if needed.
 - [ ] `SMTP_URL`, `MAIL_FROM`.
-- [ ] `UPLOAD_DIR` on persistent storage (the image uses `/data/uploads`).
 - [ ] `INITIAL_COIN_BONUS`, `SESSION_TTL_DAYS`, `ROOM_IDLE_MINUTES`, `RECONNECT_GRACE_SECONDS`
       if the defaults do not suit.
 
@@ -210,15 +208,14 @@ To scale out:
    presence ("connected" on seats) then reach sockets on every instance.
 2. Enable **sticky sessions** (IP hash or a cookie) for `/api/`: Socket.IO starts with HTTP
    long-polling before upgrading to WebSocket, and those requests must reach one instance.
-3. Put `UPLOAD_DIR` on shared storage (or one volume mounted on every instance).
-4. Run the migration job once per release, not on every instance start.
+3. Run the migration job once per release, not on every instance start.
 
 The web app is stateless and can be scaled freely.
 
 ## 7. Backup and restore
 
 **PostgreSQL holds everything that matters.** Redis only holds rate-limit counters and
-Socket.IO fan-out; losing it loses nothing durable. Back up the avatar volume as files.
+Socket.IO fan-out; losing it loses nothing durable.
 
 Daily logical backup (keep at least 14 days, and copies off the database host):
 

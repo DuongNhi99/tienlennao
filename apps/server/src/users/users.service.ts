@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Prisma } from '@prisma/client';
 import {
   API_PREFIX,
   type CurrentUserSummary,
@@ -68,31 +69,35 @@ export class UsersService {
   }
 
   async setAvatar(userId: string, image: Buffer): Promise<CurrentUserSummary> {
-    const name = await this.avatars.save(image);
-    const previous = await this.replaceAvatar(userId, name);
-    if (previous) await this.avatars.remove(previous);
+    const webp = await this.avatars.encode(image);
+    await this.replaceAvatar(userId, (tx) => this.avatars.save(tx, userId, webp));
     return this.getSummary(userId);
   }
 
   async removeAvatar(userId: string): Promise<CurrentUserSummary> {
-    const previous = await this.replaceAvatar(userId, null);
-    if (previous) await this.avatars.remove(previous);
+    await this.replaceAvatar(userId, () => Promise.resolve(null));
     return this.getSummary(userId);
   }
 
-  /** Stores the new value and returns the previous uploaded file name, if any. */
-  private async replaceAvatar(userId: string, value: string | null): Promise<string | null> {
-    const { avatarUrl } = await this.prisma.userProfile.findUniqueOrThrow({
-      where: { userId },
-      select: { avatarUrl: true },
+  /** Stores the new value and deletes the previously uploaded image, in one transaction. */
+  private async replaceAvatar(
+    userId: string,
+    next: (tx: Prisma.TransactionClient) => Promise<string | null>,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const { avatarUrl } = await tx.userProfile.findUniqueOrThrow({
+        where: { userId },
+        select: { avatarUrl: true },
+      });
+      const value = await next(tx);
+      await tx.userProfile.update({ where: { userId }, data: { avatarUrl: value } });
+      if (avatarUrl && !/^https?:\/\//.test(avatarUrl)) await this.avatars.remove(tx, avatarUrl);
     });
-    await this.prisma.userProfile.update({ where: { userId }, data: { avatarUrl: value } });
-    return avatarUrl && !/^https?:\/\//.test(avatarUrl) ? avatarUrl : null;
   }
 
   /**
    * `avatarUrl` holds either an absolute URL (e.g. from an OAuth provider) or the name of an
-   * uploaded file, which is served by GET /avatars/:file.
+   * uploaded image, which is served by GET /avatars/:file.
    */
   publicAvatarUrl(stored: string | null): string | null {
     if (!stored) return null;

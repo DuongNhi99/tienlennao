@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   adminUserStatusResponseSchema,
   apiErrorSchema,
@@ -84,7 +85,7 @@ describe('profile', () => {
 
 describe('avatar upload', () => {
   it('re-encodes a valid image to a 256×256 WebP and serves it', async () => {
-    const { http } = await registerUser(ctx.server);
+    const { http, userId } = await registerUser(ctx.server);
     const res = await http
       .put('/api/v1/users/me/avatar')
       .attach('avatar', await png(600, 400), { filename: 'me.png', contentType: 'image/png' })
@@ -99,12 +100,13 @@ describe('avatar upload', () => {
     const meta = await sharp(image.body as Buffer).metadata();
     expect(meta).toMatchObject({ format: 'webp', width: 256, height: 256 });
 
-    // Replacing the avatar deletes the previous file.
+    // Replacing the avatar deletes the previous image.
     await http
       .put('/api/v1/users/me/avatar')
       .attach('avatar', await png(64, 64), { filename: 'b.png', contentType: 'image/png' })
       .expect(200);
     await request(ctx.server).get(path).expect(404);
+    expect(await ctx.prisma.avatarImage.count({ where: { userId } })).toBe(1);
   });
 
   it('rejects files whose content is not an image, whatever their declared type', async () => {
@@ -132,18 +134,25 @@ describe('avatar upload', () => {
   });
 
   it('removes the avatar', async () => {
-    const { http } = await registerUser(ctx.server);
-    await http
+    const { http, userId } = await registerUser(ctx.server);
+    const uploaded = await http
       .put('/api/v1/users/me/avatar')
       .attach('avatar', await png(64, 64), { filename: 'a.png', contentType: 'image/png' })
       .expect(200);
+    const { avatarUrl } = currentUserSummarySchema.parse(uploaded.body);
     const res = await http.delete('/api/v1/users/me/avatar').expect(200);
     expect(currentUserSummarySchema.parse(res.body).avatarUrl).toBeNull();
+    await request(ctx.server).get(new URL(avatarUrl!).pathname).expect(404);
+    expect(await ctx.prisma.avatarImage.count({ where: { userId } })).toBe(0);
   });
 
-  it('never serves paths outside the avatar directory', async () => {
+  it('answers 404 for unknown or malformed names', async () => {
     await request(ctx.server).get('/api/v1/avatars/..%2F..%2Fpackage.json').expect(404);
     await request(ctx.server).get('/api/v1/avatars/not-a-uuid.webp').expect(404);
+    await request(ctx.server)
+      .get(`/api/v1/avatars/${'-'.repeat(36)}.webp`)
+      .expect(404);
+    await request(ctx.server).get(`/api/v1/avatars/${randomUUID()}.webp`).expect(404);
   });
 });
 

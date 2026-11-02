@@ -23,7 +23,6 @@ x-server: &server
     API_PUBLIC_URL: https://${APP_DOMAIN}/api/v1
     TRUST_PROXY: '1'
     SOCKET_IO_REDIS_ADAPTER: 'true'
-    UPLOAD_DIR: /data/uploads
 
 services:
   caddy:
@@ -58,8 +57,6 @@ services:
   server:
     <<: *server
     restart: unless-stopped
-    volumes:
-      - uploads:/data/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,4 +131,3 @@ volumes:
   caddy-config:
   postgres-data:
   redis-data:
-  uploads:

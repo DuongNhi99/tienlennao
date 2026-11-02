@@ -1,13 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-import {
-  API_PORT,
-  API_URL,
-  e2eDatabaseUrl,
-  MAIL_DIR,
-  UPLOAD_DIR,
-  WEB_PORT,
-  WEB_URL,
-} from './e2e-auth/env';
+import { API_PORT, API_URL, e2eDatabaseUrl, MAIL_DIR, WEB_PORT, WEB_URL } from './e2e-auth/env';
 
 /**
  * Authentication against the real stack: the API (built to dist-e2e, so it never clashes with
@@ -47,7 +39,6 @@ export default defineConfig({
         DATABASE_URL: e2eDatabaseUrl(),
         WEB_ORIGIN: WEB_URL,
         MAIL_OUTBOX_DIR: MAIL_DIR,
-        UPLOAD_DIR,
         API_PUBLIC_URL: API_URL,
       },
     },

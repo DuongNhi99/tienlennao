@@ -44,7 +44,6 @@ describe('validateEnv', () => {
       INITIAL_COIN_BONUS: 10_000,
       TRUST_PROXY: 0,
       MAIL_OUTBOX_DIR: '.local/mail',
-      UPLOAD_DIR: '.local/uploads',
     });
     expect(validateEnv({ ...base, WEB_APP_URL: 'https://tienlen.example/' }).WEB_APP_URL).toBe(
       'https://tienlen.example',

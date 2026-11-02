@@ -120,8 +120,6 @@ for example [Brevo](https://www.brevo.com) (300 emails a day free):
   `RENDER_DEPLOY_ENABLED` = `true`. The "Deploy API (Render)" workflow then triggers Render
   after every green CI run on `main` (switch Render's own **Auto-Deploy** off to avoid
   building twice).
-- **Avatars** are stored on the API's disk, which Render's free plan wipes on every redeploy
-  or restart: uploaded pictures disappear then (players can upload again).
 - **Backups**: Supabase's free plan has no downloadable backups. Occasionally run
   `pg_dump --format=custom --file=tienlen.dump "DATABASE"` (PostgreSQL client tools) and keep
   the file.
@@ -136,5 +134,5 @@ for example [Brevo](https://www.brevo.com) (300 emails a day free):
 - **Supabase project paused** (after a week with no activity if step 5 is skipped): Supabase →
   the project → **Restore**.
 
-When you outgrow this (more players, permanent avatars, your own domain), see
+When you outgrow this (more players, your own domain), see
 [DEPLOYMENT.md](DEPLOYMENT.md) for running everything on one rented server.

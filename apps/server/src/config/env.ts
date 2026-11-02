@@ -59,8 +59,6 @@ export const envSchema = z.object({
     .url({ protocol: /^https?$/ })
     .transform((url) => url.replace(/\/+$/, ''))
     .optional(),
-  /** Where re-encoded avatar images are stored. Must be shared storage when scaled out. */
-  UPLOAD_DIR: z.string().min(1).default('.local/uploads'),
 
   /** A room that has not started expires after this many minutes without activity. */
   ROOM_IDLE_MINUTES: z.coerce

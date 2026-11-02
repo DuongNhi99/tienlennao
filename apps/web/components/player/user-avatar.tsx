@@ -1,3 +1,6 @@
+'use client';
+
+import { useState } from 'react';
 import { cn } from '@/lib/cn';
 
 const SIZES = {
@@ -35,12 +38,27 @@ interface UserAvatarProps {
   className?: string;
 }
 
-/** Decorative by default: the player's name is always rendered as text next to it. */
+/**
+ * Decorative by default: the player's name is always rendered as text next to it. Falls back to
+ * the initials when there is no picture or it fails to load (e.g. deleted or unreachable).
+ */
 export function UserAvatar({ name, userId, avatarUrl, size = 'md', className }: UserAvatarProps) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const classes = cn('shrink-0 rounded-full ring-2 ring-white/15', SIZES[size], className);
-  if (avatarUrl) {
-    // eslint-disable-next-line @next/next/no-img-element -- user uploads are served from the API origin (Phase 3)
-    return <img src={avatarUrl} alt="" className={cn(classes, 'object-cover')} />;
+  if (avatarUrl && avatarUrl !== failedUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- user uploads are served from the API origin (Phase 3)
+      <img
+        src={avatarUrl}
+        alt=""
+        className={cn(classes, 'object-cover')}
+        onError={() => setFailedUrl(avatarUrl)}
+        // A server-rendered image can fail before hydration attaches onError.
+        ref={(img) => {
+          if (img?.complete && img.naturalWidth === 0) setFailedUrl(avatarUrl);
+        }}
+      />
+    );
   }
   return (
     <span

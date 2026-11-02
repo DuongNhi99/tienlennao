@@ -70,8 +70,6 @@ services:
     environment: *server-env
     ports:
       - '127.0.0.1:4000:4000'
-    volumes:
-      - uploads:/data/uploads
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -99,4 +97,3 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  uploads:

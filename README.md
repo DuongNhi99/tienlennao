@@ -119,7 +119,6 @@ variable names, never their values.
 | `SMTP_URL`                | server          | prod     | —                              | `smtp://` or `smtps://`; see below           |
 | `MAIL_FROM`               | server          | no       | `Tiến Lên Online <no-reply@…>` |                                              |
 | `MAIL_OUTBOX_DIR`         | server          | no       | `.local/mail`                  | Dev outbox (relative to the API's directory) |
-| `UPLOAD_DIR`              | server          | no       | `.local/uploads`               | Avatars; shared storage when scaled out      |
 | `ROOM_IDLE_MINUTES`       | server          | no       | `30`                           | Unstarted rooms expire after this idle time  |
 | `RECONNECT_GRACE_SECONDS` | server          | no       | `60`                           | Waiting-room seat kept after a disconnect    |
 
@@ -468,8 +467,6 @@ Integrity is enforced in the database, not only in application code:
 - Google OAuth is not implemented (optional in the specification).
 - Rate limiting falls back to per-process memory when Redis is unreachable. With several API
   instances and no Redis, the effective limits are multiplied by the number of instances.
-- Avatars are stored on local disk (`UPLOAD_DIR`). Several API instances need shared storage
-  (for example a mounted volume) or an object-storage adapter.
 - Installability and offline behaviour are tested automatically in Chromium only, the one
   browser installed on the verification machine. iOS Safari and Firefox were not tested.
 - On Windows, stop `pnpm db:embedded` with Ctrl+C. If the process is killed instead, stop the

@@ -1,4 +1,3 @@
-import { stat } from 'node:fs/promises';
 import {
   Body,
   Controller,
@@ -94,17 +93,15 @@ export class AvatarsController {
   @Public()
   @Get(':file')
   async get(@Param('file') name: string, @Res() res: Response): Promise<void> {
-    const file = this.storage.resolve(name);
-    if (!file || !(await stat(file).catch(() => null))?.isFile()) {
-      throw new AppException('NOT_FOUND', HttpStatus.NOT_FOUND);
-    }
-    res.sendFile(file, {
-      headers: {
+    const image = await this.storage.load(name);
+    if (!image) throw new AppException('NOT_FOUND', HttpStatus.NOT_FOUND);
+    res
+      .set({
         'Content-Type': 'image/webp',
         'Cache-Control': 'public, max-age=31536000, immutable',
         // The web app runs on another origin; helmet's default (same-origin) would block it.
         'Cross-Origin-Resource-Policy': 'cross-origin',
-      },
-    });
+      })
+      .send(image);
   }
 }

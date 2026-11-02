@@ -23,14 +23,11 @@ RUN pnpm --filter @tienlen/shared build && pnpm --filter @tienlen/server build
 
 FROM base AS runtime
 ENV NODE_ENV=production \
-    PORT=4000 \
-    UPLOAD_DIR=/data/uploads
+    PORT=4000
 COPY --from=build --chown=node:node /repo /repo
-RUN mkdir -p /data/uploads && chown node:node /data/uploads
 WORKDIR /repo/apps/server
 USER node
 EXPOSE 4000
-VOLUME ["/data/uploads"]
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/api/v1/health/live').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 CMD ["node", "dist/main.js"]

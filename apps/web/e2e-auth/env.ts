@@ -10,7 +10,6 @@ export const API_URL = `http://localhost:${API_PORT}/api/v1`;
 
 /** The API writes emails here (development outbox); tests read the links from it. */
 export const MAIL_DIR = path.join(tmpdir(), 'tienlen-e2e-mail');
-export const UPLOAD_DIR = path.join(tmpdir(), 'tienlen-e2e-uploads');
 
 /** `<DATABASE_URL database>_e2e`: created, migrated and emptied before the API starts. */
 export function e2eDatabaseUrl(): string {
