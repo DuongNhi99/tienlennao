@@ -12,6 +12,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
+import { StatsModule } from './stats/stats.module';
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -59,6 +60,7 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
     AuthModule,
     PlayModule,
     HistoryModule,
+    StatsModule,
     NotificationsModule,
     AdminModule,
   ],

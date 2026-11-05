@@ -90,13 +90,21 @@ idempotency key as a second guard. Players are notified (`user:updated`) after c
 
 Unlocked automatically when a match is settled, each at most once per user:
 
-| Code          | Condition              | Reward |
-| ------------- | ---------------------- | ------ |
-| `FIRST_MATCH` | First finished match   | 200    |
-| `FIRST_WIN`   | First 1st-place finish | 500    |
-| `TEN_MATCHES` | Ten finished matches   | 1000   |
+| Code           | Condition                                                            | Reward |
+| -------------- | -------------------------------------------------------------------- | ------ |
+| `FIRST_MATCH`  | First finished match                                                 | 200    |
+| `FIRST_WIN`    | First 1st-place finish                                               | 500    |
+| `TEN_MATCHES`  | Ten finished matches                                                 | 1000   |
+| `WIN_STREAK_5` | 1st place in five consecutive finished rounds                        | 1000   |
+| `PIG_HUNTER`   | Chopped a 2 or a pair of 2s five times (total)                       | 500    |
+| `BOMB_MASTER`  | Ten chops in total                                                   | 800    |
+| `COMEBACK`     | 1st place right after finishing last in a 3–4 player round           | 300    |
+| `PENALTY_FREE` | Last place in a 3–4 player round with 0 penalty points and no 2 left | 200    |
 
 Rewards come from the `achievements` table (seeded); inactive achievements are not awarded.
+Conditions are judged inside the settlement transaction from settled rounds only
+(`match_players`), so retries never award twice (primary key per user and achievement, ledger
+idempotency key `achievement:<code>`). Round scores, penalties and chops never move coins.
 
 ## Administrative corrections
 

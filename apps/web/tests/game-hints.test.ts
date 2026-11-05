@@ -38,6 +38,8 @@ function view(overrides: Partial<PlayerGameView> = {}): PlayerGameView {
     canPass: false,
     rules: DEFAULT_GAME_RULES,
     openingCard: null,
+    spectatorCount: 0,
+    roundNumber: null,
     ...overrides,
   };
 }

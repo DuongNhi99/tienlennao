@@ -245,6 +245,46 @@ matches (the winner finishes holding all 13 cards) and the integration suite cau
 leak test now checks that every card named in a view is the viewer's own, since the opener's
 view also names the opening card.
 
+## Enhancement: rules, rounds, spectators, invitations, statistics ✅
+
+Audit and plan: [ENHANCEMENT_AUDIT.md](ENHANCEMENT_AUDIT.md). Rule spec v4: [GAME_RULES.md](GAME_RULES.md)
+(§11, §11a, §16, §20, §21). Results: `pnpm check` passed (format, lint, typecheck; 264 shared,
+27 server, 47 web unit tests); `pnpm test:integration` 95/95 (was 82; 13 new in
+`test/integration/enhancements.test.ts`); preview browser suite 55 passed, 2 skipped by design. The
+real-stack browser suite (`test:e2e:auth`) was not run for this change.
+
+| Item                                   | Status | Evidence                                                                                                 |
+| -------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------- |
+| Rule spec v4, upgrade from v3 and v2   | ✅     | `perCard`, `unplayedHand` (cóng), `scoring`; v3 defaults reproduce v3 play (`rules.test.ts`)             |
+| Presets: standard, competitive, casual | ✅     | `RULE_VARIANTS` + regional variants; `ruleVariantOf` detects custom rules                                |
+| Per-room rules, chosen by the host     | ✅     | `rooms.ruleSnapshot`; match snapshot taken at start; integration: casual rules reach the match           |
+| Rule editor UI                         | ✅     | Presets, sections, switches, numbers, help, reset to preset, summary (`features/rules/rule-editor.tsx`)  |
+| Penalty precedence, no double counting | ✅     | `hand-analysis.test.ts`: per-card once, cóng replaces per-card, v4 kinds hidden at 0                     |
+| Penalty records                        | ✅     | `match_penalties` with unique keys, explanation, rule setting; sum equals the result (integration)       |
+| Round scores                           | ✅     | `match_players.roundScore` at settlement; result, history and statistics show it                         |
+| Series (multi-round matches)           | ✅     | `game_series`: rounds / target score / manual; rules locked after round 1; standings = Σ round scores    |
+| Spectator mode                         | ✅     | `room_spectators`, public projection, leak scan every 5 moves, cannot act (403), result after the end    |
+| Host controls                          | ✅     | 2–4 seats, remove member (cannot return), close room                                                     |
+| Invitations                            | ✅     | Direct (single use, notification) and link (hashed token, reusable, expiry, cancel); cancelled at start  |
+| Presence in the event log              | ✅     | `PLAYER_DISCONNECTED/RECONNECTED`, once per change, state untouched                                      |
+| Append-only event log and penalties    | ✅     | Trigger refuses UPDATE/DELETE (integration); `stateVersion` on every event                               |
+| Statistics                             | ✅     | Round-based; placements, average place, cards, chops, 2s, penalties, streaks, series, 12-week buckets    |
+| Leaderboards                           | ✅     | points, wins, win rate, played, best streak, chops, lowest penalty × today/week/month/all; search; pages |
+| Achievements                           | ✅     | 5 new codes judged in the settlement transaction; idempotent; listing and screen                         |
+| Profiles and privacy                   | ✅     | `/players/<id>`; private profiles hide statistics and achievements from others                           |
+| Statistics dashboard                   | ✅     | SVG/CSS charts, colours validated for the felt surface, hover/focus tooltips, table view                 |
+| Replay controls                        | ✅     | 0.5×–4× speeds added; the replay and timeline stay hidden in the UI (owner's decision in `b2091f5`)      |
+| Backfill of older rounds               | ✅     | `pnpm db:backfill` (idempotent); release jobs run it after the seed                                      |
+
+Fixes made along the way: the history list labelled every round "Hạng X/4", even with 2 or 3
+players; lobby room cards treated every room as having 4 seats; `ROOM_NOT_READY` still said four
+players were required.
+
+Known limitations of this change: an administrator-aborted round of a series cannot be followed by
+a "next round" from its (cancelled) room — the host can end the series or start a new room;
+spectating, invitations and series are not simulated by the UI preview mode; player search is
+case-insensitive but not accent-insensitive (leaderboard search is both).
+
 ## Decisions recorded so far
 
 - **Room lifecycle:** FINISHED, CANCELLED and EXPIRED are terminal. A rematch creates a new
@@ -268,6 +308,9 @@ view also names the opening card.
   action; nobody wins or loses coins because of a disconnect.
 - **Player count:** 2–4 players per match; each gets 13 cards, unused cards stay hidden;
   the weakest dealt card opens. Quick match still waits for four players.
+- **Rounds and series:** a match row is one round; a multi-round series groups rounds, each in
+  its own room. Standings are derived from settled round scores, never stored separately.
+- **Spectators** see the server's public projection only; hands appear only after the round.
 - **Economy:** fees are charged at match start (not reserved at join); payouts 50/30/20/0 % of
   the whole pool, remainders to 1st place; penalties and chops move no coins; aborted matches
   refund in full.

@@ -17,7 +17,8 @@
     "db:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
     "db:seed": "dotenv -e ../../.env -- tsx prisma/seed.ts",
     "db:set-role": "dotenv -e ../../.env -- tsx prisma/set-role.ts",
-    "db:studio": "dotenv -e ../../.env -- prisma studio"
+    "db:studio": "dotenv -e ../../.env -- prisma studio",
+    "db:backfill": "dotenv -e ../../.env -- tsx prisma/backfill-round-stats.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",

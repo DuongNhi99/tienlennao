@@ -10,7 +10,7 @@ import {
   type RoomDetail,
   sortCards,
 } from '@tienlen/shared';
-import { ArrowUpDown, LogOut, RotateCcw, Trophy, X } from 'lucide-react';
+import { ArrowUpDown, Eye, LogOut, RotateCcw, Trophy, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { CardHand } from '@/components/game/card-hand';
@@ -25,6 +25,8 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { QueryErrorState, LoadingSkeleton } from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
+import { describeSeries } from '@/features/rules/series-fields';
+import { SeriesStandings } from '@/features/series/series-standings';
 import { ApiClientError, errorMessage } from '@/lib/api/client';
 import { cn } from '@/lib/cn';
 import { formatCoins } from '@/lib/format';
@@ -155,6 +157,17 @@ export function GameScreen({ room }: { room: RoomDetail }) {
     setSelection(next);
   };
   const clearSelection = () => setSelection(new Set());
+  // A running series continues with its next round; otherwise "play again" opens a new table.
+  const nextRound = room.series?.status === 'IN_PROGRESS';
+  const nextRoundLabel = room.rematchRoomId
+    ? nextRound
+      ? 'Vào ván tiếp theo'
+      : 'Vào bàn chơi tiếp'
+    : nextRound
+      ? 'Ván tiếp theo'
+      : room.series
+        ? 'Chơi chuỗi mới'
+        : 'Chơi tiếp';
   // Another player may already have opened the next room; the server seats us there either way.
   const rematchButton = (size?: ButtonSize) => (
     <Button
@@ -163,7 +176,7 @@ export function GameScreen({ room }: { room: RoomDetail }) {
       loading={rematch.isPending || rematch.isSuccess}
       onClick={() => rematch.mutate()}
     >
-      {room.rematchRoomId ? 'Vào bàn chơi tiếp' : 'Chơi tiếp'}
+      {nextRoundLabel}
     </Button>
   );
 
@@ -176,8 +189,14 @@ export function GameScreen({ room }: { room: RoomDetail }) {
               {room.name ?? `Phòng ${room.code}`}
               <span className="ml-2 font-normal text-white/60">
                 {view.entryFee === 0 ? 'Miễn phí' : `Cược ${formatCoins(view.entryFee)} xu`}
+                {room.series ? ` · ${describeSeries(room.series, room.roundNumber)}` : ''}
               </span>
             </h1>
+            {view.spectatorCount > 0 ? (
+              <span className="flex items-center gap-1 text-xs text-white/60">
+                <Eye aria-hidden className="size-3.5" /> {view.spectatorCount} người xem
+              </span>
+            ) : null}
             {finished ? null : (
               <Button
                 variant="ghost"
@@ -309,6 +328,16 @@ export function GameScreen({ room }: { room: RoomDetail }) {
           playerName={nameOf}
           onClose={() => setResultDismissed(true)}
           rematch={rematchButton('lg')}
+          extra={
+            room.series ? (
+              <SeriesStandings
+                series={room.series}
+                roundNumber={room.roundNumber}
+                myUserId={me.userId}
+                compact
+              />
+            ) : null
+          }
         />
       ) : null}
     </>

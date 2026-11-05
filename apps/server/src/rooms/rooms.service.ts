@@ -12,8 +12,8 @@ import {
   assertTransition,
   type CreateRoomRequest,
   type CurrentRoom,
+  gameRulesSchema,
   MIN_PLAYERS_PER_MATCH,
-  PLAYERS_PER_MATCH,
   type PublicPlayer,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
@@ -22,24 +22,28 @@ import {
   type RoomListFilter,
   type RoomOptions,
   type RoomSummary,
+  type SeriesSummary,
   type UpdateRoomSettingsRequest,
 } from '@tienlen/shared';
 import { PasswordService } from '../auth/password.service';
 import { AppException } from '../common/errors/app.exception';
 import { describeError } from '../common/errors/describe-error';
-import { isUniqueViolation, lockRoom } from '../common/prisma/prisma-helpers';
+import { isUniqueViolation, lockMatch, lockRoom } from '../common/prisma/prisma-helpers';
 import type { Env } from '../config/env';
 import { RulePresetsService } from '../game/rule-presets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { SeriesService } from '../series/series.service';
 import { UsersService } from '../users/users.service';
 
-const OPEN_STATUSES: readonly RoomStatus[] = ['WAITING', 'READY', 'STARTING', 'IN_PROGRESS'];
-const JOINABLE_STATUSES: readonly RoomStatus[] = ['WAITING', 'READY'];
+export const OPEN_STATUSES: readonly RoomStatus[] = ['WAITING', 'READY', 'STARTING', 'IN_PROGRESS'];
+export const JOINABLE_STATUSES: readonly RoomStatus[] = ['WAITING', 'READY'];
 const SWEEP_INTERVAL_MS = 15_000;
 const LIST_LIMIT = 50;
 const QUICK_MATCH_NAME = 'Ghép trận nhanh';
 const QUICK_MATCH_TURN_TIMER = 30;
+/** Spectators per room. */
+export const MAX_SPECTATORS = 20;
 
 export const playerSelect = {
   id: true,
@@ -49,24 +53,35 @@ export type PlayerRecord = Prisma.UserGetPayload<{ select: typeof playerSelect }
 
 const roomInclude = {
   players: { orderBy: { seatIndex: 'asc' }, include: { user: { select: playerSelect } } },
+  spectators: { orderBy: { joinedAt: 'asc' }, include: { user: { select: playerSelect } } },
   matches: {
     orderBy: { createdAt: 'desc' },
     take: 1,
     select: {
       id: true,
       stateVersion: true,
+      ruleSnapshot: true,
       players: { orderBy: { seatIndex: 'asc' }, include: { user: { select: playerSelect } } },
     },
   },
   rematchRoom: { select: { id: true, status: true } },
+  ruleConfig: { select: { rules: true } },
 } satisfies Prisma.RoomInclude;
 type RoomRecord = Prisma.RoomGetPayload<{ include: typeof roomInclude }>;
 
-const roomError = {
+const summaryInclude = {
+  _count: { select: { players: true, spectators: true } },
+} satisfies Prisma.RoomInclude;
+type SummaryRecord = Prisma.RoomGetPayload<{ include: typeof summaryInclude }>;
+
+export const roomError = {
   notFound: () => new AppException('ROOM_NOT_FOUND', HttpStatus.NOT_FOUND),
   started: () => new AppException('ROOM_ALREADY_STARTED', HttpStatus.CONFLICT),
   alreadyInRoom: () => new AppException('ALREADY_IN_ROOM', HttpStatus.CONFLICT),
   forbidden: () => new AppException('FORBIDDEN', HttpStatus.FORBIDDEN),
+  full: () => new AppException('ROOM_FULL', HttpStatus.CONFLICT),
+  invalid: (path: string, message: string) =>
+    new AppException('VALIDATION_ERROR', HttpStatus.BAD_REQUEST, [{ path, message }]),
 };
 
 function randomRoomCode(): string {
@@ -96,6 +111,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     private readonly passwords: PasswordService,
     private readonly users: UsersService,
     private readonly realtime: RealtimeService,
+    private readonly series: SeriesService,
     config: ConfigService<Env, true>,
   ) {
     this.idleMs = config.get('ROOM_IDLE_MINUTES', { infer: true }) * 60_000;
@@ -128,7 +144,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
         status: { in: [...OPEN_STATUSES] },
         ...(filter.maxEntryFee === undefined ? {} : { entryFee: { lte: filter.maxEntryFee } }),
       },
-      include: { _count: { select: { players: true } } },
+      include: summaryInclude,
       orderBy: { createdAt: 'desc' },
       take: LIST_LIMIT * 2,
     });
@@ -136,7 +152,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
       .filter(
         (room) =>
           !filter.onlyWithSeats ||
-          (JOINABLE_STATUSES.includes(room.status) && room._count.players < PLAYERS_PER_MATCH),
+          (JOINABLE_STATUSES.includes(room.status) && room._count.players < room.maxPlayers),
       )
       .sort(
         (a, b) =>
@@ -144,25 +160,18 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
           Number(!JOINABLE_STATUSES.includes(b.status)),
       )
       .slice(0, LIST_LIMIT)
-      .map((room) => ({
-        id: room.id,
-        code: room.code,
-        name: room.name,
-        visibility: room.visibility,
-        hasPassword: room.passwordHash !== null,
-        entryFee: room.entryFee,
-        playerCount: room._count.players,
-        maxPlayers: room.maxPlayers,
-        status: room.status,
-      }));
+      .map((room) => this.toSummary(room));
   }
 
-  /** Members (and anyone, for public rooms) may view a room. */
+  /** Members, spectators (and anyone, for public rooms) may view a room. */
   async detail(roomId: string, viewerId: string): Promise<RoomDetail> {
     const room = await this.prisma.room.findUnique({ where: { id: roomId }, include: roomInclude });
     if (!room) throw roomError.notFound();
-    const detail = this.toDetail(room, viewerId);
-    if (room.visibility === 'PRIVATE' && detail.mySeat === null) throw roomError.forbidden();
+    const series = room.seriesId ? await this.series.summary(room.seriesId) : null;
+    const detail = this.toDetail(room, viewerId, series);
+    if (room.visibility === 'PRIVATE' && detail.mySeat === null && !detail.isSpectator) {
+      throw roomError.forbidden();
+    }
     return detail;
   }
 
@@ -181,23 +190,9 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
   async current(userId: string): Promise<CurrentRoom> {
     const seat = await this.prisma.roomPlayer.findUnique({
       where: { userId },
-      select: { room: { include: { _count: { select: { players: true } } } } },
+      select: { room: { include: summaryInclude } },
     });
-    if (!seat) return { room: null };
-    const { room } = seat;
-    return {
-      room: {
-        id: room.id,
-        code: room.code,
-        name: room.name,
-        visibility: room.visibility,
-        hasPassword: room.passwordHash !== null,
-        entryFee: room.entryFee,
-        playerCount: room._count.players,
-        maxPlayers: room.maxPlayers,
-        status: room.status,
-      },
-    };
+    return { room: seat ? this.toSummary(seat.room) : null };
   }
 
   /** User IDs currently seated in a room. */
@@ -207,6 +202,18 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
       select: { userId: true },
     });
     return seats.map((seat) => seat.userId);
+  }
+
+  /** The rules a room's next match plays by: the host's choice, or the room's preset. */
+  async rulesOf(room: { ruleSnapshot: Prisma.JsonValue; ruleConfigId: string | null }) {
+    if (room.ruleSnapshot !== null) {
+      const parsed = gameRulesSchema.safeParse(room.ruleSnapshot);
+      if (!parsed.success) {
+        throw new AppException('INTERNAL_ERROR', HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+      return parsed.data;
+    }
+    return this.presets.rulesFor(room.ruleConfigId);
   }
 
   // ─── Commands ─────────────────────────────────────────────────────────────
@@ -223,20 +230,30 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
 
     for (let attempt = 0; ; attempt++) {
       try {
-        const room = await this.prisma.room.create({
-          data: {
-            code: randomRoomCode(),
-            name: request.name ?? null,
-            hostId: userId,
-            visibility: request.visibility,
-            passwordHash,
-            entryFee: request.entryFee,
-            turnTimerSeconds: request.turnTimerSeconds,
-            ruleConfigId: preset.id,
-            createRequestId: request.requestId,
-            expiresAt: this.expiry(),
-            players: { create: { userId, seatIndex: 0 } },
-          },
+        const room = await this.prisma.$transaction(async (tx) => {
+          const series = request.series
+            ? await this.series.create(tx, userId, request.series)
+            : null;
+          return tx.room.create({
+            data: {
+              code: randomRoomCode(),
+              name: request.name ?? null,
+              hostId: userId,
+              visibility: request.visibility,
+              passwordHash,
+              entryFee: request.entryFee,
+              turnTimerSeconds: request.turnTimerSeconds,
+              maxPlayers: request.maxPlayers,
+              allowSpectators: request.allowSpectators,
+              ruleConfigId: preset.id,
+              ruleSnapshot: request.rules ?? undefined,
+              seriesId: series?.id ?? null,
+              roundNumber: series ? 1 : null,
+              createRequestId: request.requestId,
+              expiresAt: this.expiry(),
+              players: { create: { userId, seatIndex: 0 } },
+            },
+          });
         });
         if (room.visibility === 'PUBLIC') this.realtime.roomsChanged();
         return { roomId: room.id };
@@ -259,33 +276,21 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     return this.join(userId, room.id, password);
   }
 
-  async join(userId: string, roomId: string, password?: string): Promise<{ roomId: string }> {
-    const seat = await this.prisma.roomPlayer.findUnique({ where: { userId } });
-    if (seat?.roomId === roomId) return { roomId };
-    if (seat) throw roomError.alreadyInRoom();
+  join(userId: string, roomId: string, password?: string): Promise<{ roomId: string }> {
+    return this.seat(userId, roomId, { password });
+  }
 
-    const room = await this.prisma.room.findUnique({ where: { id: roomId } });
-    if (!room || !OPEN_STATUSES.includes(room.status)) throw roomError.notFound();
-    if (!JOINABLE_STATUSES.includes(room.status)) throw roomError.started();
-    if (
-      room.passwordHash &&
-      !(password && (await this.passwords.verify(room.passwordHash, password)))
-    ) {
-      throw new AppException('INVALID_ROOM_PASSWORD', HttpStatus.FORBIDDEN);
-    }
-    await this.assertBalance(userId, room.entryFee);
-
-    try {
-      await this.prisma.$transaction(async (tx) => {
-        await lockRoom(tx, roomId);
-        await this.takeSeat(tx, roomId, userId);
-      });
-    } catch (error) {
-      if (isUniqueViolation(error, 'userId')) throw roomError.alreadyInRoom();
-      throw error;
-    }
-    await this.notify(roomId, room.visibility === 'PUBLIC');
-    return { roomId };
+  /**
+   * Seats an invited player: the invitation stands in for the room password. `inTransaction`
+   * runs inside the seating transaction (after the room lock), so the invitation is consumed
+   * exactly when the seat is taken.
+   */
+  joinInvited(
+    userId: string,
+    roomId: string,
+    inTransaction: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<{ roomId: string }> {
+    return this.seat(userId, roomId, { invited: inTransaction });
   }
 
   /**
@@ -293,6 +298,8 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
    * so the first of its players to ask opens a new room on the same terms and hosts it; the
    * others are seated there when they ask, without the private-room password. If that room
    * has started, filled up or closed in the meantime, the next player to ask opens another.
+   * Rounds of a running series continue it (round + 1, same rules); after a finished series the
+   * new room starts a new series with the same settings.
    */
   async rematch(userId: string, roomId: string): Promise<{ roomId: string }> {
     const previous = await this.prisma.room.findUnique({
@@ -326,7 +333,10 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
       try {
         const target = await this.prisma.$transaction(async (tx) => {
           await lockRoom(tx, roomId);
-          const room = await tx.room.findUniqueOrThrow({ where: { id: roomId } });
+          const room = await tx.room.findUniqueOrThrow({
+            where: { id: roomId },
+            include: { series: true },
+          });
 
           if (room.rematchRoomId && (await lockRoom(tx, room.rematchRoomId))) {
             const linked = await tx.room.findUniqueOrThrow({
@@ -335,7 +345,8 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
             });
             if (
               JOINABLE_STATUSES.includes(linked.status) &&
-              linked.players.length < PLAYERS_PER_MATCH
+              linked.players.length < linked.maxPlayers &&
+              !linked.removedUserIds.includes(userId)
             ) {
               await this.takeSeat(tx, linked.id, userId);
               return linked.id;
@@ -343,6 +354,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
           }
 
           this.presets.assertAllowed(preset.options, room.entryFee, room.turnTimerSeconds);
+          const series = await this.nextSeriesRound(tx, room, userId);
           const created = await tx.room.create({
             data: {
               code: randomRoomCode(),
@@ -352,7 +364,13 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
               passwordHash: room.passwordHash,
               entryFee: room.entryFee,
               turnTimerSeconds: room.turnTimerSeconds,
+              maxPlayers: room.maxPlayers,
+              allowSpectators: room.allowSpectators,
               ruleConfigId: preset.id,
+              // The rules carry over; a series' own snapshot wins once its first round started.
+              ruleSnapshot: series?.rules ?? room.ruleSnapshot ?? undefined,
+              seriesId: series?.id ?? null,
+              roundNumber: series?.roundNumber ?? null,
               expiresAt: this.expiry(),
               players: { create: { userId, seatIndex: 0 } },
             },
@@ -386,6 +404,10 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     return this.detail(roomId, userId);
   }
 
+  /**
+   * Host-only, before the start. Changing anything resets everyone's readiness. Rules are fixed
+   * for a whole series once its first round has started (docs/GAME_RULES.md §20).
+   */
   async updateSettings(
     userId: string,
     roomId: string,
@@ -393,20 +415,89 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<RoomDetail> {
     const { options } = await this.presets.active();
     this.presets.assertAllowed(options, settings.entryFee, settings.turnTimerSeconds);
-    await this.prisma.$transaction(async (tx) => {
+    const removedSpectators = await this.prisma.$transaction(async (tx) => {
       const room = await this.lockOpenRoom(tx, roomId);
       if (room.hostId !== userId) throw roomError.forbidden();
       if (!JOINABLE_STATUSES.includes(room.status)) throw roomError.started();
+      if (settings.maxPlayers !== undefined && settings.maxPlayers < room.players.length) {
+        throw roomError.invalid('maxPlayers', 'Số chỗ không được ít hơn số người đang ngồi.');
+      }
+      if (
+        settings.maxPlayers !== undefined &&
+        room.players.some((p) => p.seatIndex >= settings.maxPlayers!)
+      ) {
+        throw roomError.invalid('maxPlayers', 'Có người đang ngồi ở chỗ sẽ bị bỏ.');
+      }
+      if (
+        settings.rules !== undefined &&
+        room.seriesId &&
+        (await this.series.rulesLocked(tx, room.seriesId))
+      ) {
+        throw roomError.invalid('rules', 'Luật đã cố định cho cả chuỗi ván.');
+      }
       await tx.room.update({
         where: { id: roomId },
-        data: { ...settings, expiresAt: this.expiry() },
+        data: {
+          entryFee: settings.entryFee,
+          turnTimerSeconds: settings.turnTimerSeconds,
+          ...(settings.maxPlayers === undefined ? {} : { maxPlayers: settings.maxPlayers }),
+          ...(settings.allowSpectators === undefined
+            ? {}
+            : { allowSpectators: settings.allowSpectators }),
+          ...(settings.rules === undefined ? {} : { ruleSnapshot: settings.rules }),
+          expiresAt: this.expiry(),
+        },
       });
       // Changed terms invalidate everyone's readiness.
       await tx.roomPlayer.updateMany({ where: { roomId }, data: { isReady: false } });
       await this.refreshStatus(tx, roomId);
+      if (settings.allowSpectators !== false) return [];
+      const watching = await tx.roomSpectator.findMany({ where: { roomId } });
+      await tx.roomSpectator.deleteMany({ where: { roomId } });
+      return watching.map((s) => s.userId);
     });
-    await this.notify(roomId, true);
+    for (const spectator of removedSpectators) this.realtime.leaveSpectators(spectator, roomId);
+    await this.notify(roomId, true, removedSpectators);
     return this.detail(roomId, userId);
+  }
+
+  /**
+   * Host-only, before the start: removes a seated player or a spectator. Removed users cannot
+   * come back to this room (as a player or a spectator).
+   */
+  async removeMember(hostId: string, roomId: string, targetId: string): Promise<RoomDetail> {
+    if (targetId === hostId) throw roomError.invalid('userId', 'Bạn không thể tự mời mình ra.');
+    await this.prisma.$transaction(async (tx) => {
+      const room = await this.lockOpenRoom(tx, roomId);
+      if (room.hostId !== hostId) throw roomError.forbidden();
+      if (!JOINABLE_STATUSES.includes(room.status)) throw roomError.started();
+      const seated = room.players.some((p) => p.userId === targetId);
+      const { count: watching } = await tx.roomSpectator.deleteMany({
+        where: { roomId, userId: targetId },
+      });
+      if (!seated && watching === 0) throw new AppException('NOT_FOUND', HttpStatus.NOT_FOUND);
+      if (seated) await this.vacateSeat(tx, roomId, targetId);
+      await tx.room.update({
+        where: { id: roomId },
+        data: { removedUserIds: { push: targetId } },
+      });
+    });
+    this.realtime.leaveSpectators(targetId, roomId);
+    await this.notify(roomId, true, [targetId]);
+    return this.detail(roomId, hostId);
+  }
+
+  /** Host-only, before the start: cancels the room for everyone. */
+  async close(hostId: string, roomId: string): Promise<void> {
+    const members = await this.memberIds(roomId);
+    await this.prisma.$transaction(async (tx) => {
+      const room = await this.lockOpenRoom(tx, roomId);
+      if (room.hostId !== hostId) throw roomError.forbidden();
+      if (!JOINABLE_STATUSES.includes(room.status)) throw roomError.started();
+      assertTransition(ROOM_TRANSITIONS, room.status, 'CANCELLED');
+      await this.closeRoom(tx, roomId, 'CANCELLED');
+    });
+    this.notifyUsers(roomId, members, true);
   }
 
   /** Leaving a room you are not seated in is a no-op. Players cannot leave a running match. */
@@ -418,10 +509,15 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     if (left) await this.notify(roomId, true, [userId]);
   }
 
-  /** Records a user's realtime connection state on their seat (if any) and notifies the room. */
+  /**
+   * Records a user's realtime connection state on their seat (if any) and notifies the room.
+   * During a match, a change is also written to the match's event log (PLAYER_DISCONNECTED /
+   * PLAYER_RECONNECTED); the hand, seat and turn are untouched.
+   */
   async setConnected(userId: string, connected: boolean): Promise<void> {
     const seat = await this.prisma.roomPlayer.findUnique({ where: { userId } });
     if (!seat) return;
+    const changed = (seat.disconnectedAt === null) !== connected;
     await this.prisma.roomPlayer.update({
       where: { id: seat.id },
       data: { disconnectedAt: connected ? null : new Date() },
@@ -437,17 +533,21 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
         matches: {
           orderBy: { createdAt: 'desc' },
           take: 1,
-          select: { id: true, stateVersion: true },
+          select: { id: true, stateVersion: true, status: true },
         },
       },
     });
     const match = room?.status === 'IN_PROGRESS' ? room.matches[0] : undefined;
-    if (match) {
-      this.realtime.gameUpdated(
-        { roomId, matchId: match.id, stateVersion: match.stateVersion },
-        members,
+    if (!match) return;
+    if (changed && match.status === 'PLAYING') {
+      await this.recordPresence(match.id, userId, connected).catch((error: unknown) =>
+        this.logger.warn(`Could not record a presence event: ${describeError(error)}`),
       );
     }
+    this.realtime.gameUpdated(
+      { roomId, matchId: match.id, stateVersion: match.stateVersion },
+      members,
+    );
   }
 
   /**
@@ -495,9 +595,31 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Closes a room inside the caller's transaction: frees its seats, removes its spectators and
+   * cancels its pending invitations. The caller holds the room lock and checked the transition.
+   */
+  async closeRoom(
+    tx: Prisma.TransactionClient,
+    roomId: string,
+    status: 'FINISHED' | 'CANCELLED' | 'EXPIRED',
+  ): Promise<void> {
+    await tx.roomPlayer.deleteMany({ where: { roomId } });
+    await this.cancelInvitations(tx, roomId);
+    await tx.room.update({ where: { id: roomId }, data: { status, closedAt: new Date() } });
+  }
+
+  /** Pending invitations of a room that starts or closes can no longer be used. */
+  async cancelInvitations(tx: Prisma.TransactionClient, roomId: string): Promise<void> {
+    await tx.roomInvitation.updateMany({
+      where: { roomId, status: 'PENDING' },
+      data: { status: 'CANCELLED', respondedAt: new Date() },
+    });
+  }
+
+  /**
    * Housekeeping, run every 15 s: rooms that never started expire after ROOM_IDLE_MINUTES
-   * without activity, and players disconnected from a waiting room for longer than
-   * RECONNECT_GRACE_SECONDS lose their seat.
+   * without activity, players disconnected from a waiting room for longer than
+   * RECONNECT_GRACE_SECONDS lose their seat, and overdue invitations are marked EXPIRED.
    */
   async sweep(now = new Date()): Promise<void> {
     const expired = await this.prisma.room.findMany({
@@ -505,7 +627,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
       select: { id: true },
     });
     for (const { id } of expired) {
-      const members = await this.seatedUserIds(id);
+      const members = await this.memberIds(id);
       const done = await this.prisma.$transaction(async (tx) => {
         await lockRoom(tx, id);
         const room = await tx.room.findUniqueOrThrow({ where: { id } });
@@ -513,8 +635,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
           return false;
         }
         assertTransition(ROOM_TRANSITIONS, room.status, 'EXPIRED');
-        await tx.roomPlayer.deleteMany({ where: { roomId: id } });
-        await tx.room.update({ where: { id }, data: { status: 'EXPIRED', closedAt: now } });
+        await this.closeRoom(tx, id, 'EXPIRED');
         return true;
       });
       if (done) this.notifyUsers(id, members, true);
@@ -533,11 +654,33 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
         if (!(error instanceof AppException)) throw error;
       });
     }
+
+    await this.prisma.roomInvitation.updateMany({
+      where: { status: 'PENDING', expiresAt: { lt: now } },
+      data: { status: 'EXPIRED' },
+    });
   }
 
   // ─── Internals ────────────────────────────────────────────────────────────
 
-  private toDetail(room: RoomRecord, viewerId: string): RoomDetail {
+  private toSummary(room: SummaryRecord): RoomSummary {
+    return {
+      id: room.id,
+      code: room.code,
+      name: room.name,
+      visibility: room.visibility,
+      hasPassword: room.passwordHash !== null,
+      entryFee: room.entryFee,
+      playerCount: room._count.players,
+      maxPlayers: room.maxPlayers,
+      status: room.status,
+      allowSpectators: room.allowSpectators,
+      spectatorCount: room._count.spectators,
+      roundNumber: room.roundNumber,
+    };
+  }
+
+  private toDetail(room: RoomRecord, viewerId: string, series: SeriesSummary | null): RoomDetail {
     const match = room.matches[0] ?? null;
     // While the room is open, seats are the room's; afterwards, the match's players.
     const occupants = OPEN_STATUSES.includes(room.status)
@@ -554,16 +697,17 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
           connected: true,
         }));
     const mySeat = occupants.find((o) => o.user.id === viewerId)?.seatIndex ?? null;
+    // After the start the match's snapshot is the truth; before it, the room's choice.
+    const rulesSource =
+      OPEN_STATUSES.includes(room.status) && room.status !== 'IN_PROGRESS'
+        ? (room.ruleSnapshot ?? room.ruleConfig?.rules ?? null)
+        : (match?.ruleSnapshot ?? room.ruleSnapshot ?? room.ruleConfig?.rules ?? null);
+    const rules = gameRulesSchema.safeParse(rulesSource);
     return {
-      id: room.id,
-      code: room.code,
-      name: room.name,
-      visibility: room.visibility,
-      hasPassword: room.passwordHash !== null,
-      entryFee: room.entryFee,
-      playerCount: occupants.length,
-      maxPlayers: room.maxPlayers,
-      status: room.status,
+      ...this.toSummary({
+        ...room,
+        _count: { players: occupants.length, spectators: room.spectators.length },
+      }),
       hostId: room.hostId,
       turnTimerSeconds: room.turnTimerSeconds,
       mySeat,
@@ -586,7 +730,79 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
             : null,
         };
       }),
+      rules: rules.success ? rules.data : null,
+      isSpectator: mySeat === null && room.spectators.some((s) => s.userId === viewerId),
+      spectators: room.spectators.map((s) => this.publicPlayer(s.user)),
+      series,
     };
+  }
+
+  /**
+   * The series round a rematch room plays: the next round of a running series, round 1 of a new
+   * series with the same settings after a finished one, or none for single-round rooms.
+   */
+  private async nextSeriesRound(
+    tx: Prisma.TransactionClient,
+    room: Prisma.RoomGetPayload<{ include: { series: true } }>,
+    userId: string,
+  ): Promise<{ id: string; roundNumber: number; rules: Prisma.JsonValue | null } | null> {
+    const { series } = room;
+    if (!series) return null;
+    if (series.status === 'IN_PROGRESS') {
+      const last = await tx.room.aggregate({
+        where: { seriesId: series.id },
+        _max: { roundNumber: true },
+      });
+      return {
+        id: series.id,
+        roundNumber: (last._max.roundNumber ?? room.roundNumber ?? 0) + 1,
+        rules: series.ruleSnapshot,
+      };
+    }
+    const fresh = await this.series.create(tx, userId, {
+      endCondition: series.endCondition,
+      targetRounds: series.targetRounds,
+      targetScore: series.targetScore,
+    });
+    return { id: fresh.id, roundNumber: 1, rules: series.ruleSnapshot };
+  }
+
+  /** Shared by `join` and `joinInvited`. */
+  private async seat(
+    userId: string,
+    roomId: string,
+    access: { password?: string; invited?: (tx: Prisma.TransactionClient) => Promise<void> },
+  ): Promise<{ roomId: string }> {
+    const seat = await this.prisma.roomPlayer.findUnique({ where: { userId } });
+    if (seat?.roomId === roomId) return { roomId };
+    if (seat) throw roomError.alreadyInRoom();
+
+    const room = await this.prisma.room.findUnique({ where: { id: roomId } });
+    if (!room || !OPEN_STATUSES.includes(room.status)) throw roomError.notFound();
+    if (!JOINABLE_STATUSES.includes(room.status)) throw roomError.started();
+    if (room.removedUserIds.includes(userId)) throw roomError.forbidden();
+    if (
+      !access.invited &&
+      room.passwordHash &&
+      !(access.password && (await this.passwords.verify(room.passwordHash, access.password)))
+    ) {
+      throw new AppException('INVALID_ROOM_PASSWORD', HttpStatus.FORBIDDEN);
+    }
+    await this.assertBalance(userId, room.entryFee);
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await lockRoom(tx, roomId);
+        await this.takeSeat(tx, roomId, userId);
+        await access.invited?.(tx);
+      });
+    } catch (error) {
+      if (isUniqueViolation(error, 'userId')) throw roomError.alreadyInRoom();
+      throw error;
+    }
+    this.realtime.leaveSpectators(userId, roomId);
+    await this.notify(roomId, room.visibility === 'PUBLIC');
+    return { roomId };
   }
 
   private async lockOpenRoom(tx: Prisma.TransactionClient, roomId: string) {
@@ -599,7 +815,10 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     return room;
   }
 
-  /** Seats a user in the first free seat of a joinable room. The caller holds the room lock. */
+  /**
+   * Seats a user in the first free seat of a joinable room (and ends their spectating there).
+   * The caller holds the room lock.
+   */
   private async takeSeat(
     tx: Prisma.TransactionClient,
     roomId: string,
@@ -610,10 +829,14 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
       include: { players: true },
     });
     if (!JOINABLE_STATUSES.includes(room.status)) throw roomError.started();
+    if (room.removedUserIds.includes(userId)) throw roomError.forbidden();
     const taken = new Set(room.players.map((p) => p.seatIndex));
-    const seatIndex = [0, 1, 2, 3].find((index) => !taken.has(index));
-    if (seatIndex === undefined) throw new AppException('ROOM_FULL', HttpStatus.CONFLICT);
+    const seatIndex = Array.from({ length: room.maxPlayers }, (_, i) => i).find(
+      (index) => !taken.has(index),
+    );
+    if (seatIndex === undefined) throw roomError.full();
     await tx.roomPlayer.create({ data: { roomId, userId, seatIndex } });
+    await tx.roomSpectator.deleteMany({ where: { roomId, userId } });
     await tx.room.update({ where: { id: roomId }, data: { expiresAt: this.expiry() } });
     await this.refreshStatus(tx, roomId);
   }
@@ -654,10 +877,7 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     const remaining = room.players.filter((p) => p.id !== seat.id);
     if (remaining.length === 0) {
       assertTransition(ROOM_TRANSITIONS, room.status, 'CANCELLED');
-      await tx.room.update({
-        where: { id: roomId },
-        data: { status: 'CANCELLED', closedAt: new Date() },
-      });
+      await this.closeRoom(tx, roomId, 'CANCELLED');
       return true;
     }
     if (room.hostId === userId) {
@@ -665,6 +885,30 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     }
     await this.refreshStatus(tx, roomId);
     return true;
+  }
+
+  /** Appends a presence change to a running match's log, under the match lock. */
+  private async recordPresence(matchId: string, userId: string, connected: boolean) {
+    await this.prisma.$transaction(async (tx) => {
+      await lockMatch(tx, matchId);
+      const match = await tx.match.findUniqueOrThrow({
+        where: { id: matchId },
+        select: { status: true, stateVersion: true, players: { where: { userId } } },
+      });
+      const player = match.players[0];
+      if (match.status !== 'PLAYING' || !player) return;
+      const last = await tx.matchEvent.aggregate({ where: { matchId }, _max: { sequence: true } });
+      await tx.matchEvent.create({
+        data: {
+          matchId,
+          sequence: (last._max.sequence ?? -1) + 1,
+          type: connected ? 'PLAYER_RECONNECTED' : 'PLAYER_DISCONNECTED',
+          actorUserId: userId,
+          payload: { seat: player.seatIndex },
+          stateVersion: match.stateVersion,
+        },
+      });
+    });
   }
 
   private async findCreated(userId: string, requestId: string): Promise<string | null> {
@@ -694,7 +938,16 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
     return new Date(Date.now() + this.idleMs);
   }
 
-  /** Tells everyone seated (plus `extra` users) that the room changed. */
+  /** Seated players and spectators of a room. */
+  private async memberIds(roomId: string): Promise<string[]> {
+    const [seated, spectators] = await Promise.all([
+      this.seatedUserIds(roomId),
+      this.prisma.roomSpectator.findMany({ where: { roomId }, select: { userId: true } }),
+    ]);
+    return [...seated, ...spectators.map((s) => s.userId)];
+  }
+
+  /** Tells everyone seated (plus `extra` users, plus spectators) that the room changed. */
   private async notify(roomId: string, listChanged: boolean, extra: string[] = []) {
     this.notifyUsers(roomId, [...(await this.seatedUserIds(roomId)), ...extra], listChanged);
   }

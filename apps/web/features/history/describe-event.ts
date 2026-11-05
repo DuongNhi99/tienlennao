@@ -24,5 +24,9 @@ export function describeEvent(event: TimelineEvent, name: (seat: number | null) 
       return `Ván kết thúc — ${name(event.seatIndex)} về nhất`;
     case 'MATCH_ABORTED':
       return 'Ván đấu bị hủy, phí vào bàn được hoàn lại';
+    case 'PLAYER_DISCONNECTED':
+      return `${name(event.seatIndex)} mất kết nối (máy tự đi thay khi hết giờ)`;
+    case 'PLAYER_RECONNECTED':
+      return `${name(event.seatIndex)} đã kết nối lại`;
   }
 }

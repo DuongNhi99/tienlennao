@@ -426,7 +426,7 @@ describe('a complete match between four independent clients', () => {
         expect(v.seats.every((s) => s.cardCount === 13)).toBe(true);
         // Only the opener is told which card the first play must contain: they hold it.
         expect(v.openingCard).toBe(v.turnSeat === v.mySeat ? '3S' : null);
-        expect(v.rules).toMatchObject({ specVersion: 3 });
+        expect(v.rules).toMatchObject({ specVersion: 4 });
       }
       // Each player can find the running match again (a reload, another device).
       for (const p of table) {

@@ -29,6 +29,36 @@ const ACHIEVEMENTS = [
     description: 'Hoàn thành 10 ván đấu.',
     rewardAmount: 1000,
   },
+  {
+    code: 'WIN_STREAK_5',
+    name: 'Năm trận thắng liên tiếp',
+    description: 'Về nhất 5 ván liên tiếp.',
+    rewardAmount: 1000,
+  },
+  {
+    code: 'PIG_HUNTER',
+    name: 'Thợ săn heo',
+    description: 'Chặt heo (một lá 2 hoặc đôi 2) 5 lần.',
+    rewardAmount: 500,
+  },
+  {
+    code: 'BOMB_MASTER',
+    name: 'Bậc thầy bom',
+    description: 'Chặt thành công 10 lần bằng tứ quý hoặc đôi thông.',
+    rewardAmount: 800,
+  },
+  {
+    code: 'COMEBACK',
+    name: 'Lội ngược dòng',
+    description: 'Về nhất ngay sau một ván về bét (bàn 3–4 người).',
+    rewardAmount: 300,
+  },
+  {
+    code: 'PENALTY_FREE',
+    name: 'Bét mà không thúi',
+    description: 'Về bét ở bàn 3–4 người mà không bị phạt điểm nào và không còn heo.',
+    rewardAmount: 200,
+  },
 ];
 
 async function main(): Promise<void> {

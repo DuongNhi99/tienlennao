@@ -4,6 +4,7 @@ import { SquarePlus } from 'lucide-react';
 import { useState } from 'react';
 import { InstallAppBanner } from '@/components/pwa/install-app-banner';
 import { Button } from '@/components/ui/button';
+import { PendingInvitationsBanner } from '@/features/invitations/pending-invitations-banner';
 import { ContinueGameBanner, useNewGameGuard } from './continue-game';
 import { CreateRoomModal } from './create-room-modal';
 import { JoinByCodeForm } from './join-by-code-form';
@@ -20,6 +21,7 @@ export function LobbyView() {
       <div className="flex min-w-0 flex-col gap-5">
         <h1 className="sr-only">Sảnh chờ</h1>
         <ContinueGameBanner />
+        <PendingInvitationsBanner />
         <ProfileSummary />
         <div className="grid gap-3 sm:grid-cols-2">
           <QuickPlayButton guard={guard} />

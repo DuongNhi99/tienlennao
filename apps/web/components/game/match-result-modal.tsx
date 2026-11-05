@@ -20,6 +20,8 @@ interface MatchResultModalProps {
   playerName: (seatIndex: number) => string;
   /** The "play again" button, rendered next to "back to lobby". */
   rematch?: ReactNode;
+  /** Extra content below the placements, e.g. the standings of a multi-round series. */
+  extra?: ReactNode;
 }
 
 const PLACE = ['', 'Nhất', 'Nhì', 'Ba', 'Bét'];
@@ -35,6 +37,7 @@ export function MatchResultModal({
   onClose,
   playerName,
   rematch,
+  extra,
 }: MatchResultModalProps) {
   const sorted = [...result.placements].sort((a, b) => a.placement - b.placement);
   const mine = sorted.find((p) => p.userId === myUserId);
@@ -49,6 +52,9 @@ export function MatchResultModal({
       description={mine ? `Bạn về ${PLACE[mine.placement]!.toLowerCase()}.` : undefined}
       footer={
         <>
+          <ButtonLink href={`/history/${result.matchId}`} size="lg" variant="ghost">
+            Xem lịch sử ván
+          </ButtonLink>
           <ButtonLink href="/lobby" size="lg" variant={rematch ? 'secondary' : undefined}>
             Về sảnh
           </ButtonLink>
@@ -113,6 +119,7 @@ export function MatchResultModal({
                   <span className="block text-xs text-white/60">
                     {p.cardsRemaining ? `còn ${p.cardsRemaining} lá` : 'hết bài'}
                     {p.penaltyPoints ? ` · phạt ${p.penaltyPoints} điểm` : ''}
+                    {` · điểm ván ${p.roundScore > 0 ? '+' : ''}${p.roundScore}`}
                   </span>
                 </span>
                 <span
@@ -145,6 +152,7 @@ export function MatchResultModal({
           })}
         </ol>
         <ChopList chops={result.chops} playerName={playerName} />
+        {extra}
       </div>
     </Modal>
   );

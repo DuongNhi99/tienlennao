@@ -96,7 +96,7 @@ describe('match history', () => {
     expect(new Set(cards).size).toBe(cards.length);
     expect(JSON.stringify(detail)).not.toContain('"hands"');
     // The finished match also shows what was left in each hand, its penalties and the rules.
-    expect(detail.rules).toMatchObject({ specVersion: 3, starter: 'LOWEST_CARD' });
+    expect(detail.rules).toMatchObject({ specVersion: 4, starter: 'LOWEST_CARD' });
     expect(detail.leftovers.map((l) => l.seatIndex)).toEqual([0, 1, 2, 3]);
     const left = detail.leftovers.flatMap((l) => l.remainingCards);
     expect(new Set([...cards, ...left]).size).toBe(52);

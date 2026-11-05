@@ -65,8 +65,22 @@ export const playerGameViewSchema = z.object({
   rules: gameRulesSchema.nullable().default(null),
   /** The card the first play must contain (3♠ by default), until the first play. */
   openingCard: cardIdSchema.nullable().default(null),
+  /** People watching the table. Optional for an older API. */
+  spectatorCount: z.number().int().nonnegative().default(0),
+  /** The round of a multi-round series this match is; null for a single round. */
+  roundNumber: z.number().int().positive().nullable().default(null),
 });
 export type PlayerGameView = z.infer<typeof playerGameViewSchema>;
+
+/**
+ * What a spectator sees (docs/GAME_RULES.md §21): the public projection of the match. No hand is
+ * ever included while the match is played — only card counts — and `revealedCards` appears only
+ * once it has finished, exactly as for the players.
+ */
+export const spectatorGameViewSchema = playerGameViewSchema
+  .omit({ mySeat: true, myHand: true, canPass: true, openingCard: true })
+  .extend({ spectator: z.literal(true) });
+export type SpectatorGameView = z.infer<typeof spectatorGameViewSchema>;
 
 export const leftoverPenaltySchema = z.object({
   kind: z.enum(LEFTOVER_PENALTY_KINDS),
@@ -102,6 +116,8 @@ export const matchResultSchema = z.object({
         /** Leftover penalties (thúi heo, thối bombs); docs/GAME_RULES.md §11. */
         penalties: z.array(leftoverPenaltySchema).default([]),
         penaltyPoints: z.number().int().nonnegative().default(0),
+        /** Place points minus penalties (docs/GAME_RULES.md §11a). Optional for an older API. */
+        roundScore: z.number().int().default(0),
       }),
     )
     .min(MIN_PLAYERS_PER_MATCH)

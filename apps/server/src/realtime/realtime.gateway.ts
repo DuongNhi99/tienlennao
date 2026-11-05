@@ -10,7 +10,13 @@ import type { Socket } from 'socket.io';
 import { SessionsService } from '../auth/sessions.service';
 import { describeError } from '../common/errors/describe-error';
 import { RoomsService } from '../rooms/rooms.service';
-import { type RealtimeServer, RealtimeService, userChannel } from './realtime.service';
+import { SpectatorsService } from '../rooms/spectators.service';
+import {
+  type RealtimeServer,
+  RealtimeService,
+  spectatorChannel,
+  userChannel,
+} from './realtime.service';
 
 interface SocketData {
   userId: string;
@@ -46,6 +52,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly sessions: SessionsService,
     private readonly realtime: RealtimeService,
     private readonly rooms: RoomsService,
+    private readonly spectators: SpectatorsService,
   ) {}
 
   afterInit(server: RealtimeServer): void {
@@ -70,6 +77,9 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   async handleConnection(socket: Socket): Promise<void> {
     const { userId } = socket.data as SocketData;
     await socket.join(userChannel(userId));
+    // A spectator keeps watching after a reconnect or on a second device.
+    const watched = await this.spectators.watchedRoomIds(userId).catch(() => []);
+    if (watched.length) await socket.join(watched.map(spectatorChannel));
     await this.recordConnection(userId);
   }
 

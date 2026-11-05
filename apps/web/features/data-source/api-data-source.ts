@@ -1,8 +1,18 @@
 import {
+  achievementItemSchema,
   type ClientToServerEvents,
+  createdInvitationSchema,
   currentRoomSchema,
   currentUserSummarySchema,
+  invitationListSchema,
+  invitationSchema,
   leaderboardSchema,
+  playerStatisticsSchema,
+  publicProfileSchema,
+  seriesDetailSchema,
+  spectatorGameViewSchema,
+  timelineEventSchema,
+  userSearchResultSchema,
   matchHistoryDetailSchema,
   matchHistoryPageSchema,
   notificationPageSchema,
@@ -126,6 +136,92 @@ export function createApiDataSource(): GameDataSource {
         body: settings,
         schema: roomDetailSchema,
       }),
+    removeMember: (roomId, userId) =>
+      apiRequest(`${room(roomId)}/remove-member`, {
+        method: 'POST',
+        body: { userId },
+        schema: roomDetailSchema,
+      }),
+    closeRoom: async (roomId) => {
+      await apiRequest(`${room(roomId)}/close`, { method: 'POST', schema: noContentSchema });
+    },
+    spectate: (roomId, password) =>
+      apiRequest(`${room(roomId)}/spectate`, {
+        method: 'POST',
+        body: { password },
+        schema: roomIdResponseSchema,
+      }),
+    spectateByCode: (input) =>
+      apiRequest('/rooms/spectate-by-code', {
+        method: 'POST',
+        body: input,
+        schema: roomIdResponseSchema,
+      }),
+    stopSpectating: async (roomId) => {
+      await apiRequest(`${room(roomId)}/spectate/leave`, {
+        method: 'POST',
+        schema: noContentSchema,
+      });
+    },
+    getSpectatorView: (roomId) =>
+      apiRequest(`${room(roomId)}/game/spectate`, { schema: spectatorGameViewSchema }),
+    getGameEvents: (roomId, after = -1) =>
+      apiRequest(`${room(roomId)}/game/events?after=${after}`, {
+        schema: timelineEventSchema.array(),
+      }),
+    createInvitation: (roomId, inviteeId) =>
+      apiRequest(`${room(roomId)}/invitations`, {
+        method: 'POST',
+        body: inviteeId ? { inviteeId } : {},
+        schema: createdInvitationSchema,
+      }),
+    listRoomInvitations: (roomId) =>
+      apiRequest(`${room(roomId)}/invitations`, { schema: invitationListSchema }),
+    listInvitations: () => apiRequest('/invitations', { schema: invitationListSchema }),
+    acceptInvitation: (id) =>
+      apiRequest(`/invitations/${encodeURIComponent(id)}/accept`, {
+        method: 'POST',
+        schema: roomIdResponseSchema,
+      }),
+    rejectInvitation: (id) =>
+      apiRequest(`/invitations/${encodeURIComponent(id)}/reject`, {
+        method: 'POST',
+        schema: invitationSchema,
+      }),
+    cancelInvitation: (id) =>
+      apiRequest(`/invitations/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+        schema: invitationSchema,
+      }),
+    previewInvitationLink: (token) =>
+      apiRequest(`/invitations/link/${encodeURIComponent(token)}`, { schema: invitationSchema }),
+    acceptInvitationLink: (token) =>
+      apiRequest(`/invitations/link/${encodeURIComponent(token)}/accept`, {
+        method: 'POST',
+        schema: roomIdResponseSchema,
+      }),
+    searchPlayers: (query) =>
+      apiRequest(`/users/search?q=${encodeURIComponent(query)}`, {
+        schema: userSearchResultSchema,
+      }),
+    getSeries: (id) =>
+      apiRequest(`/series/${encodeURIComponent(id)}`, { schema: seriesDetailSchema }),
+    finishSeries: (id) =>
+      apiRequest(`/series/${encodeURIComponent(id)}/finish`, {
+        method: 'POST',
+        schema: seriesDetailSchema,
+      }),
+    getMyStatistics: () => apiRequest('/users/me/statistics', { schema: playerStatisticsSchema }),
+    getMyAchievements: () =>
+      apiRequest('/users/me/achievements', { schema: achievementItemSchema.array() }),
+    getProfile: (userId) =>
+      apiRequest(`/users/${encodeURIComponent(userId)}/profile`, { schema: publicProfileSchema }),
+    setProfileVisibility: (profileVisibility) =>
+      apiRequest('/users/me/privacy', {
+        method: 'PATCH',
+        body: { profileVisibility },
+        schema: publicProfileSchema,
+      }),
     startMatch: (roomId) =>
       apiRequest(`${room(roomId)}/start`, { method: 'POST', schema: roomDetailSchema }),
     rematch: (roomId) =>
@@ -166,10 +262,16 @@ export function createApiDataSource(): GameDataSource {
           schema: leaderboardSchema,
         })
       ).entries,
-    getLeaderboard: ({ metric = 'wins', period = 'week', offset = 0, limit = 50 }) =>
-      apiRequest(`/leaderboard?metric=${metric}&period=${period}&offset=${offset}&limit=${limit}`, {
-        schema: leaderboardSchema,
-      }),
+    getLeaderboard: ({ metric = 'wins', period = 'week', offset = 0, limit = 50, search }) => {
+      const query = new URLSearchParams({
+        metric,
+        period,
+        offset: String(offset),
+        limit: String(limit),
+      });
+      if (search) query.set('search', search);
+      return apiRequest(`/leaderboard?${query.toString()}`, { schema: leaderboardSchema });
+    },
     listMatchHistory: (cursor) =>
       apiRequest(withCursor('/history', cursor), { schema: matchHistoryPageSchema }),
     getMatchHistory: (matchId) =>

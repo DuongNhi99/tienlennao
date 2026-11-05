@@ -108,4 +108,38 @@ describe('scoreLeftoverHand', () => {
     const items = scoreLeftoverHand(hand('2H 9S 9C 9D 9H'), rules);
     expect(items.map((item) => item.points)).toEqual([0, 10]);
   });
+
+  const v4 = (perCard: number, unplayedHand: number) => ({
+    ...DEFAULT_GAME_RULES,
+    leftoverPenalties: { ...DEFAULT_GAME_RULES.leftoverPenalties, perCard, unplayedHand },
+  });
+  const fullHand = hand('3S 4C 5D 6H 7S 8C 9D 10H JS QC KD 2S 2H');
+
+  it('adds a per-card penalty for every card still held, once', () => {
+    const items = scoreLeftoverHand(hand('2H 9S 5C'), v4(1, 0));
+    expect(items.map((item) => [item.kind, item.points])).toEqual([
+      ['RED_TWO', 2],
+      ['REMAINING_CARDS', 3],
+    ]);
+    expect(items[1]!.cards).toEqual(['5C', '9S', '2H']);
+  });
+
+  it('charges cóng instead of the per-card penalty for a hand nobody played from', () => {
+    const kinds = scoreLeftoverHand(fullHand, v4(1, 20)).map((item) => [item.kind, item.points]);
+    expect(kinds).toEqual([
+      ['BLACK_TWO', 1],
+      ['RED_TWO', 2],
+      ['UNPLAYED_HAND', 20],
+    ]);
+    // With cóng off, the per-card penalty applies to the full hand as to any other.
+    expect(scoreLeftoverHand(fullHand, v4(1, 0)).at(-1)).toMatchObject({
+      kind: 'REMAINING_CARDS',
+      points: 13,
+    });
+  });
+
+  it('never lists the v4 kinds when their weight is 0', () => {
+    const kinds = scoreLeftoverHand(fullHand, DEFAULT_GAME_RULES).map((item) => item.kind);
+    expect(kinds).toEqual(['BLACK_TWO', 'RED_TWO']);
+  });
 });

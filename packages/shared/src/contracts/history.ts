@@ -21,6 +21,9 @@ export const historyPlayerSchema = publicPlayerSchema.extend({
   cardsRemaining: z.number().int().min(0).nullable(),
   /** Net coins from the match (payout − fee), as settled in the ledger. Null if aborted. */
   coinDelta: z.number().int().nullable(),
+  /** Place points minus penalties (docs/GAME_RULES.md §11a). Null if aborted or unknown. */
+  roundScore: z.number().int().nullable().default(null),
+  penaltyPoints: z.number().int().nonnegative().nullable().default(null),
 });
 export type HistoryPlayer = z.infer<typeof historyPlayerSchema>;
 
@@ -36,6 +39,9 @@ export const matchHistoryItemSchema = z.object({
   durationSeconds: z.number().int().nonnegative().nullable(),
   mySeat: seatIndexSchema,
   players: z.array(historyPlayerSchema),
+  /** The multi-round series this match was a round of, if any. */
+  seriesId: z.uuid().nullable().default(null),
+  roundNumber: z.number().int().positive().nullable().default(null),
 });
 export type MatchHistoryItem = z.infer<typeof matchHistoryItemSchema>;
 
@@ -54,6 +60,8 @@ export const TIMELINE_EVENT_TYPES = [
   'PLAYER_FINISHED',
   'MATCH_FINISHED',
   'MATCH_ABORTED',
+  'PLAYER_DISCONNECTED',
+  'PLAYER_RECONNECTED',
 ] as const;
 
 export const timelineEventSchema = z.object({
@@ -100,22 +108,47 @@ export const cursorPageQuerySchema = z.object({
 
 // ─── Leaderboard (Phase 7) ──────────────────────────────────────────────────
 
-export const LEADERBOARD_METRICS = ['wins', 'winRate', 'played'] as const;
+/**
+ * Leaderboard categories. All count finished rounds (matches) only:
+ * points (sum of round scores), wins, win rate, rounds played, best winning streak, chops
+ * made (best cutting performance) and the lowest average penalty per round.
+ */
+export const LEADERBOARD_METRICS = [
+  'points',
+  'wins',
+  'winRate',
+  'played',
+  'bestStreak',
+  'chops',
+  'lowPenalty',
+] as const;
 export type LeaderboardMetric = (typeof LEADERBOARD_METRICS)[number];
-export const LEADERBOARD_PERIODS = ['week', 'all'] as const;
+export const LEADERBOARD_PERIODS = ['today', 'week', 'month', 'all'] as const;
 export type LeaderboardPeriod = (typeof LEADERBOARD_PERIODS)[number];
 
-/** Win-rate rankings need this many finished matches in the period. */
+/** Rate-based boards (win rate, lowest penalty) need this many finished rounds in the period. */
 export const WIN_RATE_MIN_MATCHES: Readonly<Record<LeaderboardPeriod, number>> = {
+  today: 3,
   week: 5,
+  month: 10,
   all: 10,
 };
+
+/** Boards ranked by a rate, which need a minimum number of rounds. */
+export const RATE_METRICS: ReadonlySet<LeaderboardMetric> = new Set(['winRate', 'lowPenalty']);
 
 export const leaderboardQuerySchema = z.object({
   metric: z.enum(LEADERBOARD_METRICS).default('wins'),
   period: z.enum(LEADERBOARD_PERIODS).default('week'),
   offset: z.coerce.number().int().min(0).max(1000).default(0),
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  /** Filters by display name (case and accents ignored); ranks stay those of the full board. */
+  search: z
+    .string()
+    .trim()
+    .max(32)
+    .transform((value) => value || undefined)
+    .optional(),
 });
 /** What a client asks for (the query string is parsed by `leaderboardQuerySchema`). */
 export interface LeaderboardQuery {
@@ -123,6 +156,7 @@ export interface LeaderboardQuery {
   period?: LeaderboardPeriod;
   offset?: number;
   limit?: number;
+  search?: string;
 }
 
 export const leaderboardSchema = z.object({
@@ -132,8 +166,9 @@ export const leaderboardSchema = z.object({
   since: z.iso.datetime().nullable(),
   minMatches: z.number().int().nonnegative(),
   entries: z.array(leaderboardEntrySchema),
-  /** Total ranked players, for paging. */
+  /** Total ranked players (matching `search`, when given), for paging. */
   total: z.number().int().nonnegative(),
+  search: z.string().nullable().default(null),
   /** The caller's own row, when ranked. */
   me: leaderboardEntrySchema.nullable(),
   generatedAt: z.iso.datetime(),

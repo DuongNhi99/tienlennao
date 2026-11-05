@@ -13,14 +13,68 @@ import { isUniqueViolation } from '../common/prisma/prisma-helpers';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from './ledger.service';
 
-/** Achievement conditions (docs/ECONOMY.md); rewards come from the `achievements` table. */
+/** What achievement conditions are judged on: settled rounds only, latest first. */
+interface AchievementFacts {
+  matchesPlayed: number;
+  matchesWon: number;
+  chopsMade: number;
+  twosChopped: number;
+  /** The player's latest rounds, newest first (at most WIN_STREAK). */
+  latest: {
+    placement: number;
+    players: number;
+    penaltyPoints: number;
+    twosLeft: number;
+    cardsRemaining: number;
+  }[];
+}
+
+const WIN_STREAK = 5;
+
+/**
+ * Achievement conditions (docs/ECONOMY.md, "Achievements"); names and rewards come from the
+ * `achievements` table. Each is judged from settled rounds after the round that just finished.
+ */
 const ACHIEVEMENT_RULES: readonly {
   code: string;
-  reached: (stats: { matchesPlayed: number; matchesWon: number }) => boolean;
+  reached: (facts: AchievementFacts) => boolean;
 }[] = [
-  { code: 'FIRST_MATCH', reached: (s) => s.matchesPlayed >= 1 },
-  { code: 'FIRST_WIN', reached: (s) => s.matchesWon >= 1 },
-  { code: 'TEN_MATCHES', reached: (s) => s.matchesPlayed >= 10 },
+  { code: 'FIRST_MATCH', reached: (f) => f.matchesPlayed >= 1 },
+  { code: 'FIRST_WIN', reached: (f) => f.matchesWon >= 1 },
+  { code: 'TEN_MATCHES', reached: (f) => f.matchesPlayed >= 10 },
+  {
+    code: 'WIN_STREAK_5',
+    reached: (f) =>
+      f.latest.length >= WIN_STREAK &&
+      f.latest.slice(0, WIN_STREAK).every((r) => r.placement === 1),
+  },
+  { code: 'PIG_HUNTER', reached: (f) => f.twosChopped >= 5 },
+  { code: 'BOMB_MASTER', reached: (f) => f.chopsMade >= 10 },
+  {
+    // Won a round right after finishing last in the previous one (3–4 players).
+    code: 'COMEBACK',
+    reached: ({ latest: [now, before] }) =>
+      !!now &&
+      !!before &&
+      now.placement === 1 &&
+      before.players >= 3 &&
+      before.placement === before.players,
+  },
+  {
+    // Finished last in a round of 3–4 players without a single penalty point or 2 left.
+    code: 'PENALTY_FREE',
+    reached: (f) => {
+      const r = f.latest[0];
+      return (
+        !!r &&
+        r.players >= 3 &&
+        r.placement === r.players &&
+        r.cardsRemaining > 0 &&
+        r.penaltyPoints === 0 &&
+        r.twosLeft === 0
+      );
+    },
+  },
 ];
 
 /** Daily login reward and achievements. Amounts are server-side constants and table values. */
@@ -80,11 +134,8 @@ export class RewardsService {
    * caller's (settlement) transaction. Returns the codes unlocked.
    */
   async unlockAchievements(tx: Prisma.TransactionClient, userId: string): Promise<string[]> {
-    const stats = await tx.userProfile.findUniqueOrThrow({
-      where: { userId },
-      select: { matchesPlayed: true, matchesWon: true },
-    });
-    const reached = ACHIEVEMENT_RULES.filter((rule) => rule.reached(stats)).map((r) => r.code);
+    const facts = await this.achievementFacts(tx, userId);
+    const reached = ACHIEVEMENT_RULES.filter((rule) => rule.reached(facts)).map((r) => r.code);
     if (!reached.length) return [];
     const achievements = await tx.achievement.findMany({
       where: { code: { in: reached }, isActive: true, users: { none: { userId } } },
@@ -101,6 +152,44 @@ export class RewardsService {
       }
     }
     return achievements.map((a) => a.code);
+  }
+
+  private async achievementFacts(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<AchievementFacts> {
+    const settled = { userId, match: { status: 'FINISHED' as const }, placement: { not: null } };
+    const [profile, totals, latest] = await Promise.all([
+      tx.userProfile.findUniqueOrThrow({
+        where: { userId },
+        select: { matchesPlayed: true, matchesWon: true },
+      }),
+      tx.matchPlayer.aggregate({ where: settled, _sum: { chopsMade: true, twosChopped: true } }),
+      tx.matchPlayer.findMany({
+        where: settled,
+        orderBy: [{ match: { finishedAt: 'desc' } }, { matchId: 'desc' }],
+        take: WIN_STREAK,
+        select: {
+          placement: true,
+          penaltyPoints: true,
+          twosLeft: true,
+          cardsRemaining: true,
+          match: { select: { _count: { select: { players: true } } } },
+        },
+      }),
+    ]);
+    return {
+      ...profile,
+      chopsMade: totals._sum.chopsMade ?? 0,
+      twosChopped: totals._sum.twosChopped ?? 0,
+      latest: latest.map((row) => ({
+        placement: row.placement!,
+        players: row.match._count.players,
+        penaltyPoints: row.penaltyPoints ?? 0,
+        twosLeft: row.twosLeft ?? 0,
+        cardsRemaining: row.cardsRemaining ?? 0,
+      })),
+    };
   }
 
   private async computeDaily(

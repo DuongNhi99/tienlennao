@@ -1,10 +1,14 @@
 import type {
+  AchievementItem,
   CardId,
+  CreatedInvitation,
   CreateReportRequest,
-  CreateRoomRequest,
+  CreateRoomInput,
   CurrentRoom,
   CurrentUserSummary,
   DailyRewardStatus,
+  Invitation,
+  InvitationList,
   JoinRoomByCodeRequest,
   Leaderboard,
   LeaderboardEntry,
@@ -15,10 +19,18 @@ import type {
   MatchResult,
   NotificationPage,
   PlayerGameView,
+  PlayerStatistics,
+  ProfileVisibility,
+  PublicPlayer,
+  PublicProfile,
   RoomDetail,
   RoomListFilter,
   RoomOptions,
   RoomSummary,
+  SeriesDetail,
+  SpectatorGameView,
+  TimelineEvent,
+  UpdateRoomSettingsInput,
   WalletSummary,
   WalletTransactionPage,
 } from '@tienlen/shared';
@@ -57,26 +69,56 @@ export interface GameDataSource {
 
   listRooms(filter: RoomListFilter): Promise<RoomSummary[]>;
   getRoomOptions(): Promise<RoomOptions>;
-  createRoom(input: CreateRoomRequest): Promise<{ roomId: string }>;
+  createRoom(input: CreateRoomInput): Promise<{ roomId: string }>;
   joinRoom(roomId: string, password?: string): Promise<{ roomId: string }>;
   joinRoomByCode(input: JoinRoomByCodeRequest): Promise<{ roomId: string }>;
   /** The room the player is seated in: the unfinished game to continue, if any. */
   getCurrentRoom(): Promise<CurrentRoom>;
   getRoom(roomId: string): Promise<RoomDetail>;
   setReady(roomId: string, ready: boolean): Promise<RoomDetail>;
-  updateRoomSettings(
-    roomId: string,
-    settings: { entryFee: number; turnTimerSeconds: number },
-  ): Promise<RoomDetail>;
+  /** Host-only, before the start. Omitted optional fields keep their value. */
+  updateRoomSettings(roomId: string, settings: UpdateRoomSettingsInput): Promise<RoomDetail>;
+  /** Host-only: remove a seated player or a spectator (they cannot come back). */
+  removeMember(roomId: string, userId: string): Promise<RoomDetail>;
+  /** Host-only, before the start: cancels the room for everyone. */
+  closeRoom(roomId: string): Promise<void>;
   startMatch(roomId: string): Promise<RoomDetail>;
-  /** After a finished match: opens (or joins) the "play again" room. */
+  /** After a finished match: opens (or joins) the "play again" / next-round room. */
   rematch(roomId: string): Promise<{ roomId: string }>;
   leaveRoom(roomId: string): Promise<void>;
+
+  spectate(roomId: string, password?: string): Promise<{ roomId: string }>;
+  spectateByCode(input: JoinRoomByCodeRequest): Promise<{ roomId: string }>;
+  stopSpectating(roomId: string): Promise<void>;
+  /** The public projection of a match, for spectators (no hands while it is played). */
+  getSpectatorView(roomId: string): Promise<SpectatorGameView>;
+  /** Public moves of the room's match after sequence `after` (players and spectators). */
+  getGameEvents(roomId: string, after?: number): Promise<TimelineEvent[]>;
 
   getGameView(roomId: string): Promise<PlayerGameView>;
   playCards(action: GameAction & { cards: CardId[] }): Promise<PlayerGameView>;
   pass(action: GameAction): Promise<PlayerGameView>;
   getMatchResult(roomId: string): Promise<MatchResult>;
+
+  /** A direct invitation (`inviteeId`) or a shareable link (none). */
+  createInvitation(roomId: string, inviteeId?: string): Promise<CreatedInvitation>;
+  listRoomInvitations(roomId: string): Promise<InvitationList>;
+  /** Invitations the player received. */
+  listInvitations(): Promise<InvitationList>;
+  acceptInvitation(invitationId: string): Promise<{ roomId: string }>;
+  rejectInvitation(invitationId: string): Promise<Invitation>;
+  cancelInvitation(invitationId: string): Promise<Invitation>;
+  previewInvitationLink(token: string): Promise<Invitation>;
+  acceptInvitationLink(token: string): Promise<{ roomId: string }>;
+  searchPlayers(query: string): Promise<PublicPlayer[]>;
+
+  getSeries(seriesId: string): Promise<SeriesDetail>;
+  finishSeries(seriesId: string): Promise<SeriesDetail>;
+
+  getMyStatistics(): Promise<PlayerStatistics>;
+  getMyAchievements(): Promise<AchievementItem[]>;
+  getProfile(userId: string): Promise<PublicProfile>;
+  setProfileVisibility(visibility: ProfileVisibility): Promise<PublicProfile>;
 
   getMatchmakingStatus(): Promise<MatchmakingStatus>;
   joinMatchmaking(entryFee: number): Promise<MatchmakingStatus>;

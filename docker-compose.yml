@@ -57,7 +57,7 @@ services:
       [
         'sh',
         '-c',
-        'node_modules/.bin/prisma migrate deploy && node_modules/.bin/tsx prisma/seed.ts',
+        'node_modules/.bin/prisma migrate deploy && node_modules/.bin/tsx prisma/seed.ts && node_modules/.bin/tsx prisma/backfill-round-stats.ts',
       ]
     depends_on:
       postgres:

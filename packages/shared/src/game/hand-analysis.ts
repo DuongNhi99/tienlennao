@@ -38,6 +38,8 @@ export const LEFTOVER_PENALTY_KINDS = [
   'FOUR_OF_A_KIND',
   'THREE_CONSECUTIVE_PAIRS',
   'FOUR_CONSECUTIVE_PAIRS',
+  'REMAINING_CARDS',
+  'UNPLAYED_HAND',
 ] as const;
 export type LeftoverPenaltyKind = (typeof LEFTOVER_PENALTY_KINDS)[number];
 
@@ -48,9 +50,11 @@ export interface LeftoverPenalty {
 }
 
 /**
- * Penalty items for cards still held at the end of a match (docs/GAME_RULES.md §11): each 2;
+ * Penalty items for cards still held at the end of a round (docs/GAME_RULES.md §11): each 2;
  * each four of a kind below 2; then each maximal run of 3+ consecutive ranks holding at least
- * two of the remaining cards.
+ * two of the remaining cards. Then, once for the whole hand, either cóng (a hand nobody played
+ * from, when `unplayedHand` is set) or the per-card penalty — never both. A card counts at most
+ * once per kind. Kinds added in spec v4 are only listed when their weight is above 0.
  */
 export function scoreLeftoverHand(hand: readonly CardId[], rules: GameRules): LeftoverPenalty[] {
   const weights = rules.leftoverPenalties;
@@ -85,6 +89,12 @@ export function scoreLeftoverHand(hand: readonly CardId[], rules: GameRules): Le
       });
     }
     start = Math.max(end, start + 1);
+  }
+  const all = sortCards(hand, 'rank', rules.suitOrder);
+  if (hand.length === rules.cardsPerPlayer && weights.unplayedHand > 0) {
+    items.push({ kind: 'UNPLAYED_HAND', cards: all, points: weights.unplayedHand });
+  } else if (weights.perCard > 0 && hand.length > 0) {
+    items.push({ kind: 'REMAINING_CARDS', cards: all, points: weights.perCard * hand.length });
   }
   return items;
 }

@@ -8,6 +8,15 @@
  * shared contracts. Shuffling uses Math.random — acceptable only here.
  */
 import {
+  type AchievementItem,
+  achievementItemSchema,
+  type GameRules,
+  invitationListSchema,
+  matchesSearch,
+  type PlayerStatistics,
+  playerStatisticsSchema,
+  type ProfileVisibility,
+  publicProfileSchema,
   type ActionResult,
   ALL_CARD_IDS,
   applyPass,
@@ -26,7 +35,7 @@ import {
   type TimelineEvent,
   toChopResults,
   toTimelineEvent,
-  type CreateRoomRequest,
+  type CreateRoomInput,
   createRoomRequestSchema,
   currentRoomSchema,
   currentUserSummarySchema,
@@ -64,6 +73,7 @@ import {
   matchHistoryPageSchema,
   notificationPageSchema,
   rankLeaderboard,
+  RATE_METRICS,
   WIN_RATE_MIN_MATCHES,
   type WalletTransaction,
   type WalletTransactionType,
@@ -112,6 +122,9 @@ interface MockRoom {
   seats: (MockSeat | null)[];
   matchId: string | null;
   rematchRoomId: string | null;
+  rules: GameRules;
+  /** Players the host removed; they cannot come back. */
+  removed: string[];
 }
 
 interface MockGame {
@@ -178,6 +191,8 @@ function seedRooms(): MockRoom[] {
     status: 'WAITING',
     matchId: null,
     rematchRoomId: null,
+    rules: PREVIEW_RULES,
+    removed: [],
     ...fields,
   });
   const [long, trang, bao, han, huy, ngoc, tung] = BOTS as [
@@ -230,6 +245,81 @@ function seedRooms(): MockRoom[] {
   ];
 }
 
+/** Fixed statistics for the preview account (48 rounds, 15 wins), consistent with its summary. */
+function previewStatistics(): PlayerStatistics {
+  const placements = [15, 13, 11, 9];
+  const weekly = Array.from({ length: 12 }, (_, i) => {
+    const played = [2, 0, 3, 5, 4, 1, 6, 3, 7, 5, 8, 4][i]!;
+    const won = Math.round(played * 0.3);
+    return {
+      weekStart: new Date(Date.UTC(2026, 7, 10 + i * 7) - 7 * 3600_000).toISOString(),
+      played,
+      won,
+      score: won * 3 + (played - won),
+      penaltyPoints: played > 3 ? 2 : 0,
+    };
+  });
+  return playerStatisticsSchema.parse({
+    roundsPlayed: 48,
+    roundsWon: 15,
+    winRate: 31.3,
+    averagePlace: 2.3,
+    placements: placements.map((count, i) => ({ place: i + 1, count })),
+    lastPlaces: 9,
+    cardsPlayed: 512,
+    chopsMade: 7,
+    twosChopped: 3,
+    chopsReceived: 5,
+    twosLeft: 6,
+    penaltyPoints: 21,
+    totalScore: 70,
+    streaks: { currentWin: 1, bestWin: 3, currentLoss: 0, longestLoss: 5 },
+    series: { played: 4, won: 1 },
+    recent: BOTS.slice(0, 6).map((_, i) => ({
+      matchId: uuid(0xd00 + i),
+      finishedAt: new Date(Date.UTC(2026, 9, 30 - i, 12)).toISOString(),
+      placement: [1, 3, 2, 4, 1, 2][i]!,
+      players: 4,
+      roundScore: [3, 1, 2, -2, 3, 2][i]!,
+      penaltyPoints: [0, 0, 0, 2, 0, 0][i]!,
+    })),
+    weekly,
+  });
+}
+
+function previewAchievements(): AchievementItem[] {
+  return [
+    [
+      'FIRST_MATCH',
+      'Ván đầu tiên',
+      'Hoàn thành ván đấu đầu tiên.',
+      200,
+      '2026-03-14T10:00:00.000Z',
+    ],
+    ['PENALTY_FREE', 'Bét mà không thúi', 'Về bét ở bàn 3–4 người mà không bị phạt.', 200, null],
+    ['COMEBACK', 'Lội ngược dòng', 'Về nhất ngay sau một ván về bét.', 300, null],
+    [
+      'FIRST_WIN',
+      'Chiến thắng đầu tiên',
+      'Về nhất trong một ván đấu.',
+      500,
+      '2026-03-15T20:00:00.000Z',
+    ],
+    ['PIG_HUNTER', 'Thợ săn heo', 'Chặt heo 5 lần.', 500, null],
+    ['BOMB_MASTER', 'Bậc thầy bom', 'Chặt thành công 10 lần.', 800, null],
+    [
+      'TEN_MATCHES',
+      'Người chơi chăm chỉ',
+      'Hoàn thành 10 ván đấu.',
+      1000,
+      '2026-04-02T19:00:00.000Z',
+    ],
+    ['WIN_STREAK_5', 'Năm trận thắng liên tiếp', 'Về nhất 5 ván liên tiếp.', 1000, null],
+  ].map(([code, name, description, rewardAmount, unlockedAt]) =>
+    achievementItemSchema.parse({ code, name, description, rewardAmount, unlockedAt }),
+  );
+}
+
 export function createPreviewDataSource(): GameDataSource {
   const listeners = new Set<(event: DataSourceEvent) => void>();
   const rooms = new Map<string, MockRoom>(seedRooms().map((r) => [r.id, r]));
@@ -237,6 +327,22 @@ export function createPreviewDataSource(): GameDataSource {
   const createRequests = new Map<string, string>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const now = Date.now();
+  let profileVisibility: ProfileVisibility = 'PUBLIC';
+
+  function profileOf(userId: string) {
+    const player = userId === ME.userId ? ME : BOTS.find((b) => b.userId === userId);
+    if (!player) throw new ApiError('NOT_FOUND', 404);
+    const isMe = userId === ME.userId;
+    const visible = isMe || profileVisibility === 'PUBLIC';
+    return publicProfileSchema.parse({
+      ...player,
+      createdAt: '2026-03-14T09:30:00.000Z',
+      visibility: isMe ? profileVisibility : 'PUBLIC',
+      isMe,
+      statistics: visible ? previewStatistics() : null,
+      achievements: visible ? previewAchievements() : null,
+    });
+  }
 
   const user = {
     id: ME.userId,
@@ -345,7 +451,16 @@ export function createPreviewDataSource(): GameDataSource {
       [BOTS[2]!, 120, 260],
       [ME, 15, 48],
     ] as const
-  ).map(([player, wins, played]) => ({ ...player, wins, played }));
+  ).map(([player, wins, played], i) => ({
+    ...player,
+    wins,
+    played,
+    // Plausible, fixed figures for the other boards.
+    points: wins * 3 + Math.round((played - wins) * 0.8),
+    bestStreak: [6, 5, 4, 4, 3, 3, 3][i]!,
+    chops: [41, 37, 25, 30, 18, 12, 7][i]!,
+    penaltyPoints: [380, 470, 300, 210, 350, 150, 21][i]!,
+  }));
   const matchmaking: {
     state: MatchmakingStatus['state'];
     entryFee: number | null;
@@ -451,6 +566,7 @@ export function createPreviewDataSource(): GameDataSource {
       turnTimerSeconds: room.turnTimerSeconds,
       mySeat: mySeat === -1 ? null : mySeat,
       matchId: room.matchId,
+      rules: room.rules,
       rematchRoomId: (() => {
         const next = room.rematchRoomId ? rooms.get(room.rematchRoomId) : undefined;
         return next && (next.status === 'WAITING' || next.status === 'READY') ? next.id : null;
@@ -507,7 +623,7 @@ export function createPreviewDataSource(): GameDataSource {
       matchId: crypto.randomUUID(),
       roomId: room.id,
       players,
-      state: startMatch(hands, PREVIEW_RULES).state,
+      state: startMatch(hands, room.rules).state,
       timeline: [],
       turnDeadline: 0,
       processedActions: new Set(),
@@ -587,6 +703,7 @@ export function createPreviewDataSource(): GameDataSource {
       coinDelta: payouts[p.placement - 1]! - room.entryFee,
       penalties: p.penalties,
       penaltyPoints: p.penaltyPoints,
+      roundScore: p.roundScore,
     }));
     const chops = toChopResults(outcome.chops);
     game.result = matchResultSchema.parse({
@@ -609,16 +726,30 @@ export function createPreviewDataSource(): GameDataSource {
         durationSeconds: Math.round((Date.now() - game.startedAt) / 1000),
         mySeat: mySeatInGame(game),
         players: placements
-          .map(({ seatIndex, placement, cardsRemaining, coinDelta, ...p }) => ({
-            userId: p.userId,
-            displayName: p.displayName,
-            avatarUrl: p.avatarUrl,
-            seatIndex,
-            placement,
-            cardsRemaining,
-            coinDelta,
-          }))
+          .map(
+            ({
+              seatIndex,
+              placement,
+              cardsRemaining,
+              coinDelta,
+              roundScore,
+              penaltyPoints,
+              ...p
+            }) => ({
+              userId: p.userId,
+              displayName: p.displayName,
+              avatarUrl: p.avatarUrl,
+              seatIndex,
+              placement,
+              cardsRemaining,
+              coinDelta,
+              roundScore,
+              penaltyPoints,
+            }),
+          )
           .sort((a, b) => a.seatIndex - b.seatIndex),
+        seriesId: null,
+        roundNumber: null,
         timeline: game.timeline,
         rules: game.state.rules,
         leftovers: placements
@@ -735,7 +866,7 @@ export function createPreviewDataSource(): GameDataSource {
       return roomOptionsSchema.parse(OPTIONS);
     },
 
-    async createRoom(input: CreateRoomRequest) {
+    async createRoom(input: CreateRoomInput) {
       await delay(LATENCY_MS);
       const request = createRoomRequestSchema.parse(input);
       const existing = createRequests.get(request.requestId);
@@ -761,6 +892,8 @@ export function createPreviewDataSource(): GameDataSource {
         seats: [seat(ME), null, null, null],
         matchId: null,
         rematchRoomId: null,
+        rules: request.rules ?? PREVIEW_RULES,
+        removed: [],
       };
       rooms.set(room.id, room);
       createRequests.set(request.requestId, room.id);
@@ -820,6 +953,7 @@ export function createPreviewDataSource(): GameDataSource {
       }
       room.entryFee = settings.entryFee;
       room.turnTimerSeconds = settings.turnTimerSeconds;
+      if (settings.rules) room.rules = settings.rules as GameRules;
       // Changed terms invalidate everyone's readiness.
       room.seats.forEach((s) => s && (s.isReady = false));
       refreshReadiness(room);
@@ -861,6 +995,8 @@ export function createPreviewDataSource(): GameDataSource {
         seats: game.players.map((p) => (p.userId === ME.userId ? seat(ME) : seat(p, true))),
         matchId: null,
         rematchRoomId: null,
+        rules: PREVIEW_RULES,
+        removed: [],
       };
       rooms.set(next.id, next);
       previous.rematchRoomId = next.id;
@@ -953,6 +1089,8 @@ export function createPreviewDataSource(): GameDataSource {
           seats: [seat(a, true), seat(ME, true), seat(b, true), seat(c, true)],
           matchId: null,
           rematchRoomId: null,
+          rules: PREVIEW_RULES,
+          removed: [],
         };
         rooms.set(room.id, room);
         refreshReadiness(room);
@@ -981,24 +1119,31 @@ export function createPreviewDataSource(): GameDataSource {
       period = 'week',
       offset = 0,
       limit = 50,
+      search,
     }: LeaderboardQuery) {
       await delay(LATENCY_MS);
-      const minMatches = metric === 'winRate' ? WIN_RATE_MIN_MATCHES[period] : 0;
+      const minMatches = RATE_METRICS.has(metric) ? WIN_RATE_MIN_MATCHES[period] : 0;
       const ranked = rankLeaderboard(leaderboardRows, metric, minMatches).map((row) =>
         leaderboardEntrySchema.parse({
           ...leaderboardRows.find((r) => r.userId === row.userId)!,
           rank: row.rank,
           matchesPlayed: row.played,
           winRate: row.winRate,
+          points: row.points,
+          bestStreak: row.bestStreak,
+          chops: row.chops,
+          averagePenalty: row.averagePenalty,
         }),
       );
+      const shown = search ? ranked.filter((e) => matchesSearch(e.displayName, search)) : ranked;
       return leaderboardSchema.parse({
         metric,
         period,
         since: period === 'week' ? new Date(now - 3 * 86_400_000).toISOString() : null,
         minMatches,
-        entries: ranked.slice(offset, offset + limit),
-        total: ranked.length,
+        entries: shown.slice(offset, offset + limit),
+        total: shown.length,
+        search: search ?? null,
         me: ranked.find((e) => e.userId === ME.userId) ?? null,
         generatedAt: new Date().toISOString(),
       });
@@ -1089,6 +1234,119 @@ export function createPreviewDataSource(): GameDataSource {
       const readAt = new Date().toISOString();
       notifications.forEach((n) => (n.readAt ??= readAt));
       emit({ type: 'notifications' });
+    },
+    async removeMember(roomId: string, userId: string) {
+      await delay(LATENCY_MS);
+      const room = getRoomOrThrow(roomId);
+      if (room.hostId !== ME.userId) throw new ApiError('FORBIDDEN', 403);
+      if (room.status !== 'WAITING' && room.status !== 'READY') {
+        throw new ApiError('ROOM_ALREADY_STARTED', 409);
+      }
+      const index = room.seats.findIndex((s) => s?.player.userId === userId);
+      if (index === -1 || userId === ME.userId) throw new ApiError('NOT_FOUND', 404);
+      room.seats[index] = null;
+      room.removed.push(userId);
+      refreshReadiness(room);
+      emit({ type: 'room', roomId });
+      emit({ type: 'rooms' });
+      return toDetail(room);
+    },
+
+    async closeRoom(roomId: string) {
+      await delay(LATENCY_MS);
+      const room = getRoomOrThrow(roomId);
+      if (room.hostId !== ME.userId) throw new ApiError('FORBIDDEN', 403);
+      if (room.status !== 'WAITING' && room.status !== 'READY') {
+        throw new ApiError('ROOM_ALREADY_STARTED', 409);
+      }
+      room.status = 'CANCELLED';
+      room.seats = room.seats.map(() => null);
+      emit({ type: 'room', roomId });
+      emit({ type: 'rooms' });
+    },
+
+    // Spectating, invitations and series need several real accounts: not simulated here.
+    async spectate() {
+      await delay(LATENCY_MS);
+      throw new ApiError('FEATURE_UNAVAILABLE', 501);
+    },
+    async spectateByCode() {
+      await delay(LATENCY_MS);
+      throw new ApiError('FEATURE_UNAVAILABLE', 501);
+    },
+    async stopSpectating() {
+      await delay(LATENCY_MS);
+    },
+    async getSpectatorView() {
+      await delay(LATENCY_MS);
+      throw new ApiError('FORBIDDEN', 403);
+    },
+    async getGameEvents(roomId: string, after = -1) {
+      await delay(LATENCY_MS);
+      const game = [...games.values()].find((g) => g.roomId === roomId);
+      if (!game) throw new ApiError('NOT_FOUND', 404);
+      return game.timeline.filter((e) => e.sequence > after);
+    },
+    async createInvitation() {
+      await delay(LATENCY_MS);
+      throw new ApiError('FEATURE_UNAVAILABLE', 501);
+    },
+    async listRoomInvitations() {
+      await delay(LATENCY_MS);
+      return invitationListSchema.parse({ items: [] });
+    },
+    async listInvitations() {
+      await delay(LATENCY_MS);
+      return invitationListSchema.parse({ items: [] });
+    },
+    async acceptInvitation() {
+      await delay(LATENCY_MS);
+      throw new ApiError('NOT_FOUND', 404);
+    },
+    async rejectInvitation() {
+      await delay(LATENCY_MS);
+      throw new ApiError('NOT_FOUND', 404);
+    },
+    async cancelInvitation() {
+      await delay(LATENCY_MS);
+      throw new ApiError('NOT_FOUND', 404);
+    },
+    async previewInvitationLink() {
+      await delay(LATENCY_MS);
+      throw new ApiError('INVALID_TOKEN', 404);
+    },
+    async acceptInvitationLink() {
+      await delay(LATENCY_MS);
+      throw new ApiError('INVALID_TOKEN', 404);
+    },
+    async searchPlayers(query: string) {
+      await delay(LATENCY_MS);
+      return BOTS.filter((bot) => matchesSearch(bot.displayName, query)).slice(0, 10);
+    },
+    async getSeries() {
+      await delay(LATENCY_MS);
+      throw new ApiError('NOT_FOUND', 404);
+    },
+    async finishSeries() {
+      await delay(LATENCY_MS);
+      throw new ApiError('NOT_FOUND', 404);
+    },
+    async getMyStatistics() {
+      await delay(LATENCY_MS);
+      return previewStatistics();
+    },
+    async getMyAchievements() {
+      await delay(LATENCY_MS);
+      return previewAchievements();
+    },
+    async getProfile(userId: string) {
+      await delay(LATENCY_MS);
+      return profileOf(userId);
+    },
+    async setProfileVisibility(visibility: ProfileVisibility) {
+      await delay(LATENCY_MS);
+      profileVisibility = visibility;
+      return profileOf(ME.userId);
     },
   };
 }

@@ -5,4 +5,6 @@
 set -e
 node_modules/.bin/prisma migrate deploy
 node_modules/.bin/tsx prisma/seed.ts
+# Idempotent: fills per-round statistics of rounds settled before they existed (once).
+node_modules/.bin/tsx prisma/backfill-round-stats.ts
 exec node dist/main.js

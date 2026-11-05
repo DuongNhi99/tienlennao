@@ -15,6 +15,7 @@ interface MatchReplayProps {
 }
 
 const STEP_MS = 1200;
+const SPEEDS = [0.5, 1, 2, 4] as const;
 
 /**
  * Step-through replay of the public timeline: the table, card counts, passes and places after
@@ -24,6 +25,7 @@ export function MatchReplay({ timeline, players, name }: MatchReplayProps) {
   const frames = useMemo(() => buildReplay(timeline, players), [timeline, players]);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1);
   const last = frames.length - 1;
   const frame = frames[Math.min(index, last)]!;
 
@@ -33,9 +35,9 @@ export function MatchReplay({ timeline, players, name }: MatchReplayProps) {
     const timer = setTimeout(() => {
       setIndex(Math.min(index + 1, last));
       if (index + 1 >= last) setPlaying(false);
-    }, STEP_MS);
+    }, STEP_MS / speed);
     return () => clearTimeout(timer);
-  }, [playing, index, last]);
+  }, [playing, index, last, speed]);
 
   const go = (to: number) => {
     setPlaying(false);
@@ -140,6 +142,23 @@ export function MatchReplay({ timeline, players, name }: MatchReplayProps) {
           onClick={() => go(last)}
           disabled={index >= last}
         />
+      </div>
+      <div role="radiogroup" aria-label="Tốc độ phát lại" className="flex justify-center gap-1">
+        {SPEEDS.map((value) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={speed === value}
+            onClick={() => setSpeed(value)}
+            className={cn(
+              'min-h-9 rounded-full px-3 text-xs font-medium',
+              speed === value ? 'bg-white/20' : 'bg-white/5 hover:bg-white/10',
+            )}
+          >
+            {value.toLocaleString('vi-VN')}×
+          </button>
+        ))}
       </div>
       <label className="flex items-center gap-3 text-xs text-white/70">
         <span className="tabular-nums">

@@ -1,4 +1,10 @@
-import { type GameRules, SUIT_SYMBOLS } from '@tienlen/shared';
+import {
+  type GameRules,
+  INSTANT_WIN_LABELS_VI,
+  RULE_VARIANTS,
+  ruleVariantOf,
+  SUIT_SYMBOLS,
+} from '@tienlen/shared';
 
 export interface RuleLine {
   label: string;
@@ -10,6 +16,7 @@ const yes = (on: boolean) => (on ? 'Có' : 'Không');
 /** The rules a match was played by, as label/value lines (docs/GAME_RULES.md). */
 export function summarizeRules(rules: GameRules): RuleLine[] {
   const { bombs, leftoverPenalties: p } = rules;
+  const points = rules.scoring.placementPoints;
   return [
     {
       label: 'Đi trước',
@@ -43,5 +50,25 @@ export function summarizeRules(rules: GameRules): RuleLine[] {
       label: 'Phạt thúi',
       value: `heo đen ${p.blackTwo}, heo đỏ ${p.redTwo}, tứ quý ${p.fourOfAKind}, 3 đôi thông ${p.threeConsecutivePairs}, 4 đôi thông ${p.fourConsecutivePairs} điểm`,
     },
+    {
+      label: 'Phạt lá còn lại, cóng',
+      value: `${p.perCard} điểm mỗi lá; cóng ${p.unplayedHand ? `${p.unplayedHand} điểm (thay cho phạt từng lá)` : 'không phạt'}`,
+    },
+    {
+      label: 'Điểm ván (4 · 3 · 2 người)',
+      value: `${points.four.join('/')} · ${points.three.join('/')} · ${points.two.join('/')}${rules.scoring.subtractPenalties ? ', trừ điểm phạt' : ', không trừ điểm phạt'}`,
+    },
+    {
+      label: 'Tới trắng',
+      value: rules.instantWins.length
+        ? rules.instantWins.map((kind) => INSTANT_WIN_LABELS_VI[kind]).join(', ')
+        : 'Không',
+    },
   ];
+}
+
+/** "Miền Nam chuẩn", "Vui vẻ" … or "Tùy chỉnh" once anything was edited. */
+export function ruleSetLabel(rules: GameRules): string {
+  const key = ruleVariantOf(rules);
+  return key === 'CUSTOM' ? 'Tùy chỉnh' : RULE_VARIANTS[key].label;
 }

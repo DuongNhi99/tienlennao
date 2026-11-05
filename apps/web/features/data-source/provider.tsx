@@ -47,6 +47,8 @@ function EventBridge({ source }: { source: GameDataSource }) {
             // Finished matches change the history and the rankings too.
             void queryClient.invalidateQueries({ queryKey: queryKeys.history });
             void queryClient.invalidateQueries({ queryKey: queryKeys.leaderboardPreview });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.statistics });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.achievements });
             break;
           case 'rooms':
             void queryClient.invalidateQueries({ queryKey: queryKeys.rooms() });
@@ -55,16 +57,24 @@ function EventBridge({ source }: { source: GameDataSource }) {
             void queryClient.invalidateQueries({ queryKey: queryKeys.room(event.roomId) });
             // Seated, left, started or finished: the game to continue may have changed.
             void queryClient.invalidateQueries({ queryKey: queryKeys.currentRoom });
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.roomInvitations(event.roomId),
+            });
             break;
           case 'game':
             void queryClient.invalidateQueries({ queryKey: queryKeys.game(event.roomId) });
             void queryClient.invalidateQueries({ queryKey: queryKeys.matchResult(event.roomId) });
+            // Spectators watch the same room through its public view and move list.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.spectatorView(event.roomId) });
+            void queryClient.invalidateQueries({ queryKey: queryKeys.gameEvents(event.roomId) });
             break;
           case 'matchmaking':
             void queryClient.invalidateQueries({ queryKey: queryKeys.matchmaking });
             break;
           case 'notifications':
             void queryClient.invalidateQueries({ queryKey: queryKeys.notifications });
+            // New invitations arrive as notifications.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.invitations });
             break;
           case 'resync':
             void queryClient.invalidateQueries();

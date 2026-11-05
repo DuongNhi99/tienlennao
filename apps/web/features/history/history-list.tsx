@@ -22,11 +22,11 @@ export function formatDuration(seconds: number | null): string {
   return minutes > 0 ? `${minutes} phút ${seconds % 60} giây` : `${seconds} giây`;
 }
 
-/** "Hạng 1/4", or "Đã hủy" for an aborted match. */
+/** "Hạng 1/4" (out of the players of that match), or "Đã hủy" for an aborted match. */
 export function placementLabel(match: MatchHistoryItem): string {
   if (match.status === 'ABORTED') return 'Đã hủy';
   const me = match.players.find((p) => p.seatIndex === match.mySeat)!;
-  return `Hạng ${me.placement}/4`;
+  return `Hạng ${me.placement}/${match.players.length}`;
 }
 
 export function HistoryList() {
@@ -68,10 +68,18 @@ export function HistoryList() {
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold">
                         {placementLabel(match)} · {match.roomName ?? `Phòng ${match.roomCode}`}
+                        {match.roundNumber ? (
+                          <span className="ml-2 rounded bg-white/10 px-1.5 text-xs font-medium">
+                            Ván {match.roundNumber} của chuỗi
+                          </span>
+                        ) : null}
                       </p>
                       <p className="text-xs text-white/60">
                         {formatDateTime(match.startedAt)} · {formatDuration(match.durationSeconds)}
                         {match.entryFee > 0 ? ` · Cược ${formatCoins(match.entryFee)} xu` : ''}
+                        {me.roundScore !== null
+                          ? ` · ${me.roundScore > 0 ? '+' : ''}${me.roundScore} điểm`
+                          : ''}
                       </p>
                     </div>
                     {me.coinDelta !== null && match.entryFee > 0 ? (

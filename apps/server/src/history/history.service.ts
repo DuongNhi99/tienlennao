@@ -10,13 +10,15 @@ import {
   type MatchHistoryDetail,
   type MatchHistoryItem,
   type MatchHistoryPage,
+  matchesSearch,
+  periodStart,
+  RATE_METRICS,
   type RankedRow,
   rankLeaderboard,
   restoreMatchState,
   type TimelineEvent,
   toChopResults,
   toTimelineEvent,
-  weekStart,
   WIN_RATE_MIN_MATCHES,
 } from '@tienlen/shared';
 import { AppException } from '../common/errors/app.exception';
@@ -120,15 +122,17 @@ export class HistoryService {
   async leaderboard(
     metric: LeaderboardMetric,
     period: LeaderboardPeriod,
-    { offset, limit }: { offset: number; limit: number },
+    { offset, limit, search }: { offset: number; limit: number; search?: string },
     viewerId: string,
     now = new Date(),
   ): Promise<Leaderboard> {
-    const since = period === 'week' ? weekStart(now) : null;
-    const minMatches = metric === 'winRate' ? WIN_RATE_MIN_MATCHES[period] : 0;
-    const rows = await this.rankedRows(metric, period, since, minMatches);
+    const since = periodStart(period, now);
+    const minMatches = RATE_METRICS.has(metric) ? WIN_RATE_MIN_MATCHES[period] : 0;
+    const ranked = await this.rankedRows(metric, period, since, minMatches);
+    // Searching filters the board; ranks stay those of the whole board.
+    const rows = search ? ranked.filter((row) => matchesSearch(row.displayName, search)) : ranked;
     const page = rows.slice(offset, offset + limit);
-    const me = rows.find((row) => row.userId === viewerId) ?? null;
+    const me = ranked.find((row) => row.userId === viewerId) ?? null;
     const profiles = await this.prisma.userProfile.findMany({
       where: { userId: { in: [...page, ...(me ? [me] : [])].map((row) => row.userId) } },
       select: { userId: true, avatarUrl: true },
@@ -142,6 +146,10 @@ export class HistoryService {
       wins: row.wins,
       matchesPlayed: row.played,
       winRate: row.winRate,
+      points: row.points,
+      bestStreak: row.bestStreak,
+      chops: row.chops,
+      averagePenalty: row.averagePenalty,
     });
     return {
       metric,
@@ -150,6 +158,7 @@ export class HistoryService {
       minMatches,
       entries: page.map(toEntry),
       total: rows.length,
+      search: search ?? null,
       me: me ? toEntry(me) : null,
       generatedAt: now.toISOString(),
     };
@@ -216,14 +225,18 @@ export class HistoryService {
         placement: aborted ? null : p.placement,
         cardsRemaining: aborted ? null : p.cardsRemaining,
         coinDelta: aborted ? null : p.coinDelta,
+        roundScore: aborted ? null : p.roundScore,
+        penaltyPoints: aborted ? null : p.penaltyPoints,
       })),
+      seriesId: match.seriesId,
+      roundNumber: match.roundNumber,
     };
   }
 
   /**
-   * Counts finished matches per active player (aborted matches and suspended or deleted
+   * Aggregates finished rounds per active player (aborted rounds and suspended or deleted
    * accounts never count), ranked. Cached for a minute per board: results are public, the
-   * same for everyone, and only change when matches finish.
+   * same for everyone, and only change when rounds finish.
    */
   private async rankedRows(
     metric: LeaderboardMetric,
@@ -239,13 +252,19 @@ export class HistoryService {
       match: { status: 'FINISHED', ...(since ? { finishedAt: { gte: since } } : {}) },
       user: { status: 'ACTIVE' },
     };
-    const [played, wins] = await Promise.all([
-      this.prisma.matchPlayer.groupBy({ by: ['userId'], where, _count: { _all: true } }),
+    const [played, wins, streaks] = await Promise.all([
+      this.prisma.matchPlayer.groupBy({
+        by: ['userId'],
+        where,
+        _count: { _all: true },
+        _sum: { roundScore: true, chopsMade: true, penaltyPoints: true },
+      }),
       this.prisma.matchPlayer.groupBy({
         by: ['userId'],
         where: { ...where, placement: 1 },
         _count: { _all: true },
       }),
+      this.bestStreaks(since),
     ]);
     const winsBy = new Map(wins.map((w) => [w.userId, w._count._all]));
     const names = await this.prisma.userProfile.findMany({
@@ -259,11 +278,41 @@ export class HistoryService {
         displayName: nameBy.get(p.userId) ?? '',
         played: p._count._all,
         wins: winsBy.get(p.userId) ?? 0,
+        points: p._sum.roundScore ?? 0,
+        chops: p._sum.chopsMade ?? 0,
+        penaltyPoints: p._sum.penaltyPoints ?? 0,
+        bestStreak: streaks.get(p.userId) ?? 0,
       })),
       metric,
       minMatches,
     );
     this.leaderboardCache.set(key, { at: Date.now(), rows });
     return rows;
+  }
+
+  /**
+   * Each player's longest run of consecutive 1st places in the period, in the order rounds
+   * finished ("gaps and islands": rows of one run share the difference of two row numbers).
+   */
+  private async bestStreaks(since: Date | null): Promise<Map<string, number>> {
+    const rows = await this.prisma.$queryRaw<{ userId: string; best: number }[]>`
+      SELECT "userId", MAX(len)::int AS best FROM (
+        SELECT "userId", COUNT(*) AS len FROM (
+          SELECT mp."userId", mp.placement,
+            ROW_NUMBER() OVER (PARTITION BY mp."userId" ORDER BY m."finishedAt", m.id)
+            - ROW_NUMBER() OVER (PARTITION BY mp."userId", (mp.placement = 1)
+                                 ORDER BY m."finishedAt", m.id) AS grp
+          FROM match_players mp
+          JOIN matches m ON m.id = mp."matchId"
+          JOIN users u ON u.id = mp."userId"
+          WHERE m.status = 'FINISHED' AND u.status = 'ACTIVE'
+            AND (${since}::timestamptz IS NULL
+                 OR (m."finishedAt" AT TIME ZONE 'UTC') >= ${since}::timestamptz)
+        ) runs
+        WHERE placement = 1
+        GROUP BY "userId", grp
+      ) islands
+      GROUP BY "userId"`;
+    return new Map(rows.map((row) => [row.userId, row.best]));
   }
 }

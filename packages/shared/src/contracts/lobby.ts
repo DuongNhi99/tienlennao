@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { PLAYERS_PER_MATCH } from '../constants/game';
 import { ROOM_STATUSES } from '../constants/lifecycle';
-import { roomVisibilitySchema } from '../schemas/rooms';
+import { gameRulesSchema } from '../game/rules';
+import { roomVisibilitySchema, SERIES_END_CONDITIONS } from '../schemas/rooms';
 
 /**
  * Read models for the lobby, waiting room, and player summaries. Draft v0: the UI is built
@@ -46,8 +47,67 @@ export const roomSummarySchema = z.object({
   playerCount: z.number().int().min(0).max(PLAYERS_PER_MATCH),
   maxPlayers: z.number().int(),
   status: roomStatusSchema,
+  /** The fields below are optional so the web app keeps working with an older API. */
+  allowSpectators: z.boolean().default(false),
+  spectatorCount: z.number().int().nonnegative().default(0),
+  /** The round this room plays when it belongs to a multi-round series. */
+  roundNumber: z.number().int().positive().nullable().default(null),
 });
 export type RoomSummary = z.infer<typeof roomSummarySchema>;
+
+export const seriesStatusSchema = z.enum(['IN_PROGRESS', 'FINISHED', 'CANCELLED']);
+
+/** A player's cumulative result in a series (docs/GAME_RULES.md §20). */
+export const seriesStandingSchema = publicPlayerSchema.extend({
+  /** 1-based; players with equal totals, round wins and best place share a rank. */
+  rank: z.number().int().positive(),
+  totalScore: z.number().int(),
+  roundsPlayed: z.number().int().nonnegative(),
+  roundsWon: z.number().int().nonnegative(),
+  penaltyPoints: z.number().int().nonnegative(),
+});
+export type SeriesStanding = z.infer<typeof seriesStandingSchema>;
+
+export const seriesSummarySchema = z.object({
+  id: z.uuid(),
+  hostId: z.uuid(),
+  status: seriesStatusSchema,
+  endCondition: z.enum(SERIES_END_CONDITIONS),
+  targetRounds: z.number().int().positive().nullable(),
+  targetScore: z.number().int().positive().nullable(),
+  /** Finished rounds (aborted rounds do not count). */
+  roundsPlayed: z.number().int().nonnegative(),
+  winnerId: z.uuid().nullable(),
+  standings: z.array(seriesStandingSchema),
+});
+export type SeriesSummary = z.infer<typeof seriesSummarySchema>;
+
+export const seriesRoundSchema = z.object({
+  roundNumber: z.number().int().positive(),
+  matchId: z.uuid(),
+  roomId: z.uuid(),
+  status: z.enum(['PLAYING', 'FINISHED', 'ABORTED']),
+  finishedAt: z.iso.datetime().nullable(),
+  results: z.array(
+    publicPlayerSchema.extend({
+      placement: z.number().int().min(1).max(PLAYERS_PER_MATCH).nullable(),
+      roundScore: z.number().int().nullable(),
+      penaltyPoints: z.number().int().nonnegative().nullable(),
+    }),
+  ),
+});
+export type SeriesRound = z.infer<typeof seriesRoundSchema>;
+
+/** GET /series/:seriesId: every round and the cumulative standings. */
+export const seriesDetailSchema = seriesSummarySchema.extend({
+  rules: gameRulesSchema.nullable(),
+  createdAt: z.iso.datetime(),
+  finishedAt: z.iso.datetime().nullable(),
+  rounds: z.array(seriesRoundSchema),
+  /** The open room of the next round, if someone has started it. */
+  nextRoomId: z.uuid().nullable(),
+});
+export type SeriesDetail = z.infer<typeof seriesDetailSchema>;
 
 export const roomListFilterSchema = z.object({
   /** Maximum entry fee (inclusive); undefined = any. */
@@ -81,6 +141,13 @@ export const roomDetailSchema = roomSummarySchema.extend({
    * the web app keeps working while an older API (deployed separately) is still live.
    */
   rematchRoomId: z.uuid().nullable().default(null),
+  /** The rules the next match will be played by (the room's, or the active preset's). */
+  rules: gameRulesSchema.nullable().default(null),
+  /** True when the viewer watches the room without a seat. */
+  isSpectator: z.boolean().default(false),
+  spectators: z.array(publicPlayerSchema).default([]),
+  /** The multi-round series this room is a round of, with the standings so far. */
+  series: seriesSummarySchema.nullable().default(null),
 });
 export type RoomDetail = z.infer<typeof roomDetailSchema>;
 
@@ -106,6 +173,12 @@ export const leaderboardEntrySchema = publicPlayerSchema.extend({
   matchesPlayed: z.number().int().nonnegative(),
   /** Percentage with one decimal place (wins / matches played). */
   winRate: z.number().min(0).max(100),
+  /** Sum of round scores (docs/GAME_RULES.md §11a). Optional for an older API. */
+  points: z.number().int().default(0),
+  bestStreak: z.number().int().nonnegative().default(0),
+  chops: z.number().int().nonnegative().default(0),
+  /** Average penalty points per round, one decimal place. */
+  averagePenalty: z.number().nonnegative().default(0),
 });
 export type LeaderboardEntry = z.infer<typeof leaderboardEntrySchema>;
 

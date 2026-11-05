@@ -1,8 +1,8 @@
 'use client';
 
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { PLAYERS_PER_MATCH, type RoomStatus, type RoomSummary } from '@tienlen/shared';
-import { Coins, Globe, LayoutGrid, Lock, Users } from 'lucide-react';
+import type { RoomStatus, RoomSummary } from '@tienlen/shared';
+import { Coins, Eye, Globe, LayoutGrid, Lock, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -38,21 +38,28 @@ function RoomCard({
   room,
   onJoin,
   joining,
+  onSpectate,
+  spectating,
 }: {
   room: RoomSummary;
   onJoin: () => void;
   joining: boolean;
+  onSpectate: () => void;
+  spectating: boolean;
 }) {
   // READY rooms can still take players until they start.
   const joinable =
-    (room.status === 'WAITING' || room.status === 'READY') && room.playerCount < PLAYERS_PER_MATCH;
+    (room.status === 'WAITING' || room.status === 'READY') && room.playerCount < room.maxPlayers;
   const title = room.name ?? `Phòng ${room.code}`;
   return (
     <li className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-felt-800/70 p-4">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="truncate font-semibold">{title}</h3>
-          <p className="text-xs text-white/60">Mã: {room.code}</p>
+          <p className="text-xs text-white/60">
+            Mã: {room.code}
+            {room.roundNumber ? ` · Chuỗi ván, ván ${room.roundNumber}` : ''}
+          </p>
         </div>
         <span
           className={cn(
@@ -86,19 +93,33 @@ function RoomCard({
       {room.visibility === 'PRIVATE' ? (
         <p className="text-xs text-white/60">Vào bằng mã phòng và mật khẩu.</p>
       ) : (
-        <Button
-          variant={joinable ? 'primary' : 'secondary'}
-          disabled={!joinable}
-          loading={joining}
-          onClick={onJoin}
-          aria-label={joinable ? `Vào ${title}` : undefined}
-        >
-          {joinable
-            ? 'Vào phòng'
-            : room.playerCount >= PLAYERS_PER_MATCH
-              ? 'Đã đủ người'
-              : 'Đang chơi'}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant={joinable ? 'primary' : 'secondary'}
+            disabled={!joinable}
+            loading={joining}
+            onClick={onJoin}
+            className="flex-1"
+            aria-label={joinable ? `Vào ${title}` : undefined}
+          >
+            {joinable
+              ? 'Vào phòng'
+              : room.playerCount >= room.maxPlayers
+                ? 'Đã đủ người'
+                : 'Đang chơi'}
+          </Button>
+          {room.allowSpectators ? (
+            <Button
+              variant="secondary"
+              loading={spectating}
+              onClick={onSpectate}
+              icon={<Eye aria-hidden className="size-4" />}
+              aria-label={`Xem ${title}`}
+            >
+              Xem{room.spectatorCount ? ` (${room.spectatorCount})` : ''}
+            </Button>
+          ) : null}
+        </div>
       )}
     </li>
   );
@@ -122,6 +143,11 @@ export function RoomList() {
   });
   const join = useMutation({
     mutationFn: (roomId: string) => source.joinRoom(roomId),
+    onSuccess: ({ roomId }) => router.push(`/room/${roomId}`),
+    onError: (error) => showToast(errorMessage(error), { variant: 'error' }),
+  });
+  const spectate = useMutation({
+    mutationFn: (roomId: string) => source.spectate(roomId),
     onSuccess: ({ roomId }) => router.push(`/room/${roomId}`),
     onError: (error) => showToast(errorMessage(error), { variant: 'error' }),
   });
@@ -178,6 +204,8 @@ export function RoomList() {
               room={room}
               joining={join.isPending && join.variables === room.id}
               onJoin={() => join.mutate(room.id)}
+              spectating={spectate.isPending && spectate.variables === room.id}
+              onSpectate={() => spectate.mutate(room.id)}
             />
           ))}
         </ul>

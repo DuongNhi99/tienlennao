@@ -7,7 +7,8 @@ responsive, installable **Next.js PWA** with a **NestJS** backend.
 > or real-world prize redemption. Adding any of these requires a separate legal, compliance,
 > and security review first.
 
-**Status:** Phases 1–8 (foundation, UI and PWA, accounts, game engine, multiplayer, wallet and
+**Status:** Phases 1–8 and the rules/rounds/spectators/invitations/statistics enhancement
+([docs/ENHANCEMENT_AUDIT.md](docs/ENHANCEMENT_AUDIT.md)). Phases 1–8 (foundation, UI and PWA, accounts, game engine, multiplayer, wallet and
 rewards, history and administration, quality and deployment) are complete. Deployment and
 operations: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); free hosting without a server:
 [docs/FREE_HOSTING.md](docs/FREE_HOSTING.md). See [docs/IMPLEMENTATION_CHECKLIST.md](docs/IMPLEMENTATION_CHECKLIST.md).
@@ -147,6 +148,7 @@ when those features are built.
 | `pnpm db:migrate`                          | `prisma migrate dev` (create and apply migrations in development)             |
 | `pnpm db:deploy`                           | `prisma migrate deploy` (apply committed migrations; CI/production)           |
 | `pnpm db:seed`                             | Idempotent seed of reference data                                             |
+| `pnpm db:backfill`                         | Idempotent: per-round statistics and penalty records of older rounds          |
 | `pnpm db:studio`                           | Prisma Studio                                                                 |
 | `pnpm db:embedded`                         | Docker-less PostgreSQL (dev only, data in `.local/pgdata`)                    |
 | `pnpm services:up`                         | Start PostgreSQL + Redis containers                                           |
@@ -432,6 +434,74 @@ Administrators cannot change finished match results or edit ledger rows. Daily r
 and the payout table are code constants documented in [docs/ECONOMY.md](docs/ECONOMY.md); changing
 them is a reviewed deployment, not an admin setting. The first administrator is created with
 `pnpm db:set-role <email> ADMIN`.
+
+## Rules, rounds, spectators, invitations and statistics
+
+Audit and plan: [docs/ENHANCEMENT_AUDIT.md](docs/ENHANCEMENT_AUDIT.md). Rules: rule spec v4 in
+[docs/GAME_RULES.md](docs/GAME_RULES.md) (§11 penalties, §11a round score, §16 presets, §20
+series, §21 spectators).
+
+**Room rules and options.** The host picks a rule set (Miền Nam chuẩn, Thi đấu nghiêm ngặt, Vui
+vẻ, or a regional variant) and may edit any configurable rule before the start; everyone can read
+the rules in the waiting room. Rooms take 2–4 seats (`maxPlayers`) and may allow spectators.
+Changing anything resets readiness. The host can remove a player or spectator (they cannot come
+back to that room) and close the room.
+
+**Series (multi-round matches).** A room can start a series that ends after N rounds, at a target
+score, or when the host ends it. Rules are fixed when round 1 starts; each round is its own room
+and match; standings are the sum of the settled round scores.
+
+**Spectators.** Spectators get the server's public projection only (`GET …/game/spectate`): card
+counts, never hands, until the round has finished. They receive the same payload-free Socket.IO
+notifications through a per-room channel and cannot act.
+
+**Invitations.** Seated players invite by name (single-use direct invitation with an in-app
+notification) or create a link (`/invite/<token>`, 256-bit token, only its hash is stored,
+reusable for 24 hours). Accepting seats the player through the normal seat rules but skips the
+room password. Pending invitations are cancelled when the room starts or closes.
+
+**Statistics, leaderboards, achievements.** Settlement stores per-round statistics on
+`match_players` (round score, penalty points, cards played, chops made/received, 2s chopped,
+2s left) and the penalty records; statistics, streaks and leaderboards are derived from them.
+Rounds settled before this change are filled in by `pnpm db:backfill` (idempotent; the release
+jobs run it after the seed). Profiles can be made private.
+
+**Event log.** `match_events` and `match_penalties` are append-only (a database trigger refuses
+UPDATE and DELETE); every event carries the state version after it; disconnects and reconnects
+during play are logged.
+
+| Method | Path                                 | Success                     | Notes                                                                                                   |
+| ------ | ------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------- |
+| POST   | `/rooms` (extra fields)              | `201 { roomId }`            | `maxPlayers`, `allowSpectators`, `rules`, `series`                                                      |
+| PATCH  | `/rooms/:roomId/settings` (extra)    | `RoomDetail`                | `maxPlayers`, `allowSpectators`, `rules` (locked in series)                                             |
+| POST   | `/rooms/:roomId/remove-member`       | `RoomDetail`                | host only, before the start                                                                             |
+| POST   | `/rooms/:roomId/close`               | `204`                       | host only, before the start                                                                             |
+| POST   | `/rooms/:roomId/spectate`            | `{ roomId }`                | `403 SPECTATORS_NOT_ALLOWED`, `INVALID_ROOM_PASSWORD`                                                   |
+| POST   | `/rooms/spectate-by-code`            | `{ roomId }`                | as above                                                                                                |
+| POST   | `/rooms/:roomId/spectate/leave`      | `204`                       |                                                                                                         |
+| GET    | `/rooms/:roomId/game/spectate`       | `SpectatorGameView`         | spectators only                                                                                         |
+| GET    | `/rooms/:roomId/game/events?after`   | `TimelineEvent[]`           | players and spectators; never the deal                                                                  |
+| POST   | `/rooms/:roomId/invitations`         | `201 CreatedInvitation`     | `{ inviteeId }` or `{}` for a link; seated players only                                                 |
+| GET    | `/rooms/:roomId/invitations`         | `{ items }`                 | seated players                                                                                          |
+| GET    | `/invitations`                       | `{ items }`                 | received                                                                                                |
+| POST   | `/invitations/:id/accept` · `reject` | `{ roomId }` · `Invitation` | invitee only; `409 INVITATION_UNAVAILABLE`                                                              |
+| POST   | `/invitations/:id/cancel`            | `Invitation`                | inviter or host                                                                                         |
+| GET    | `/invitations/link/:token`           | `Invitation`                | `404 INVALID_TOKEN`                                                                                     |
+| POST   | `/invitations/link/:token/accept`    | `{ roomId }`                | `409 INVITATION_UNAVAILABLE`                                                                            |
+| GET    | `/series/:seriesId`                  | `SeriesDetail`              | participants only (others 404)                                                                          |
+| POST   | `/series/:seriesId/finish`           | `SeriesDetail`              | host only, between rounds                                                                               |
+| GET    | `/users/me/statistics`               | `PlayerStatistics`          | round-based                                                                                             |
+| GET    | `/users/me/achievements`             | `AchievementItem[]`         |                                                                                                         |
+| PATCH  | `/users/me/privacy`                  | `PublicProfile`             | `{ profileVisibility }`                                                                                 |
+| GET    | `/users/:userId/profile`             | `PublicProfile`             | statistics hidden for private profiles                                                                  |
+| GET    | `/users/search?q`                    | `PublicPlayer[]`            | display names, for invitations                                                                          |
+| GET    | `/leaderboard?metric&period&search`  | `Leaderboard`               | metrics: points, wins, winRate, played, bestStreak, chops, lowPenalty; periods: today, week, month, all |
+
+Web: rule editor (create room, room settings), waiting-room host controls, invite modal,
+`/invitations`, `/invite/<token>`, spectator screen, series standings and `/series/<id>`,
+statistics dashboard and achievements on `/profile`, public profiles at `/players/<id>`, the
+extended leaderboard. The UI preview mode simulates rules, removal, statistics and achievements;
+spectating, invitations and series need real accounts and report "Sắp ra mắt" there.
 
 ## Data model
 

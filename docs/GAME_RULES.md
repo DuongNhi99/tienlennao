@@ -1,4 +1,4 @@
-# Game rules — Tiến Lên Miền Nam (rule spec v3)
+# Game rules — Tiến Lên Miền Nam (rule spec v4)
 
 This is the authoritative rule specification for Tiến Lên Online. The engine in
 `packages/shared/src/game/` implements it; every rule below has unit tests in the same
@@ -9,9 +9,14 @@ Configurable rules live in a `GameRules` object (`gameRulesSchema`, `rules.ts`).
 stored in `game_rule_configurations`; a match copies its preset into `matches.ruleSnapshot`
 when it starts, so later preset changes never affect a running or finished match.
 
-Spec v3 added the settings marked _(v3)_ below. Every v3 default reproduces v2 behaviour, and
-v2 rules (stored presets, snapshots of running matches) are upgraded on read with exactly those
-defaults, so nothing that was already playing changes.
+Spec v3 added the settings marked _(v3)_ below, spec v4 those marked _(v4)_. Every new default
+reproduces the previous version's behaviour, and older rules (stored presets, room rules,
+snapshots of running matches) are upgraded on read (v2 → v3 → v4) with exactly those defaults, so
+nothing that was already playing changes. Rooms may carry their own rules, chosen by the host
+before the start (`rooms.ruleSnapshot`); without them a room plays the active preset.
+
+Terminology: a **round** (_ván_) is one hand — one `matches` row. A **series** (multi-round
+match, §20) is a sequence of rounds with cumulative scores. Statistics are round-based.
 
 ## 1. Deck, players and dealing
 
@@ -159,25 +164,48 @@ Instant wins (§12) end the match before any card is played.
 When a match ends by normal play, each player still holding cards receives penalty points
 for what they hold. Each weight is **configurable** (`leftoverPenalties`); 0 disables it.
 
-| Leftover                                   | Default weight |
-| ------------------------------------------ | -------------- |
-| Each black 2 (♠, ♣)                        | 1              |
-| Each red 2 (♦, ♥)                          | 2              |
-| Each four of a kind (ranks 3 to A)         | 4              |
-| Each run of three consecutive pairs        | 3              |
-| Each run of four or more consecutive pairs | 6              |
+| Leftover                                          | Default weight |
+| ------------------------------------------------- | -------------- |
+| Each black 2 (♠, ♣)                               | 1              |
+| Each red 2 (♦, ♥)                                 | 2              |
+| Each four of a kind (ranks 3 to A)                | 4              |
+| Each run of three consecutive pairs               | 3              |
+| Each run of four or more consecutive pairs        | 6              |
+| _(v4)_ Each card still held (`perCard`)           | 0              |
+| _(v4)_ Cóng: never played a card (`unplayedHand`) | 0              |
 
 The hand is scored deterministically: count each 2; count each four of a kind except 2s
 (those are already counted card by card); remove those four-of-a-kind cards; then find each
 maximal run of consecutive ranks (3 to A) holding at least two cards, and score runs of
 length 3 or 4+.
 
+Precedence (no double counting): each 2 counts once, as a 2; a four of a kind never also counts
+as part of a run; then, once per hand, either **cóng** (all 13 cards still held, when
+`unplayedHand` > 0) **or** the per-card penalty — cóng replaces the per-card penalty, while 2s
+and bombs still count. A card is therefore counted at most once per kind. Kinds added in v4 are
+listed only when their weight is above 0. Illegal actions are always rejected, never penalized.
+
+Every item is stored at settlement as a penalty record (`match_penalties`: player, cards, rule
+setting, points, explanation) with a unique key per match, seat, kind and cards, so a retried
+settlement can never charge a hand twice.
+
 Points are reported per player in the match result. They do not change placements. Whether
 they move coins is a settlement policy decision (Phase 6). No penalties apply after an
 instant win.
 
-"Cóng" (a player who has not played a card when someone finishes) is not part of this
-version.
+Cóng is configurable since v4 (`unplayedHand`, off by default): a player still holding all 13
+cards when the round ends by normal play.
+
+## 11a. Round score _(v4)_
+
+Every finished round gives each player a **round score** (`scoring`):
+
+- place points by player count (`placementPoints.four`, `.three`, `.two`; defaults 3/2/1/0,
+  2/1/0 and 1/0; a worse place never scores more than a better one), then
+- minus the round's penalty points when `subtractPenalties` is on (default on).
+
+Round scores feed series standings (§20), the points leaderboard and statistics. They never change
+placements or coins.
 
 ## 12. Instant wins (tới trắng)
 
@@ -241,19 +269,24 @@ actions, the engine always produces the same states and events.
 
 ## 16. Regional variants
 
-`RULE_VARIANTS` (`rules.ts`) names ready-made presets that differ from the standard rules only
-where their name says; the admin preset form offers them as starting points:
+`RULE_VARIANTS` (`rules.ts`) names three complete presets and regional variants that differ
+from the standard rules only where their name says. Hosts pick one in the room's rule editor and
+may then change any configurable rule (shown as "Tùy chỉnh"); the admin preset form offers the
+same starting points:
 
-| Key                | Vietnamese                       | Difference                       |
-| ------------------ | -------------------------------- | -------------------------------- |
-| `STANDARD`         | Miền Nam chuẩn                   | none (`DEFAULT_GAME_RULES`)      |
-| `CHOP_OUT_OF_TURN` | Chặt ngang                       | `bombs.outOfTurn`                |
-| `WINNER_LEADS`     | Người thắng ván trước đánh trước | `starter: 'PREVIOUS_WINNER'`     |
-| `FIRST_FINISHER`   | Nhất ăn tất                      | `endCondition: 'FIRST_FINISHER'` |
+| Key                | Vietnamese                       | Difference                                                                                                      |
+| ------------------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `STANDARD`         | Miền Nam chuẩn                   | none (`DEFAULT_GAME_RULES`)                                                                                     |
+| `COMPETITIVE`      | Thi đấu nghiêm ngặt              | `perCard` 1, `unplayedHand` 20                                                                                  |
+| `CASUAL`           | Vui vẻ                           | free opening; 3 đôi thông chop a pair of 2s; instant wins only dragon and four 2s; no penalties, not subtracted |
+| `CHOP_OUT_OF_TURN` | Chặt ngang                       | `bombs.outOfTurn`                                                                                               |
+| `WINNER_LEADS`     | Người thắng ván trước đánh trước | `starter: 'PREVIOUS_WINNER'`                                                                                    |
+| `FIRST_FINISHER`   | Nhất ăn tất                      | `endCondition: 'FIRST_FINISHER'`                                                                                |
 
 Not modelled in this version (each would need its own rule decision): a pass that only skips
 one turn instead of locking the player out of the trick, restrictions on finishing with a 2 or
-a bomb ("tới bằng heo"), "cóng", and points for chops.
+a bomb ("tới bằng heo"), forbidding a single 2 or a pair of 2s (a player left with a lone 2
+could then never lead or finish), and points for chops.
 
 ## 17. Persistence and continuing a match
 
@@ -274,7 +307,8 @@ an absent player), while a waiting room can be left.
   After an instant win it names the kind.
 - History adds the rules the match was played by (its snapshot), the leftovers and chops, and
   the public timeline. `buildReplay` turns the timeline into frames — table, card counts,
-  passes and places after each move — for a step-by-step replay. The deal is never published,
+  passes and places after each move — for a step-by-step replay (play/pause, step, restart,
+  0.5×–4× speed, jump to any step). The deal is never published,
   so the replay shows card counts, not hands.
 
 ## 19. Bots
@@ -283,3 +317,34 @@ an absent player), while a waiting room can be left.
 It chooses only among `legalPlays`, so it obeys every rule the engine enforces: finish when
 possible; shed ordinary cards first; chop only a 2 or a bomb, with the smallest bomb; spend a 2
 only on a high table or near the end; otherwise pass. Production matches have no bots.
+
+## 20. Multi-round matches (series)
+
+A room can be created as the first round of a **series** that ends:
+
+- `ROUNDS`: after `targetRounds` finished rounds (1–50);
+- `TARGET_SCORE`: as soon as a player's cumulative score reaches `targetScore` (1–1000);
+- `MANUAL`: when the host ends it, between rounds.
+
+Each round is an ordinary room and match, so every round keeps a clean, auditable lifecycle. The
+rules are fixed for the whole series when its first round starts (`game_series.ruleSnapshot`);
+later rounds cannot change them. "Next round" from a finished round opens (or joins) the next
+round's room: same table, same rules, round number + 1, a fresh deal. Cumulative standings are
+always computed from the rounds' settled `match_players.roundScore` — never stored separately —
+and ranked by total, then round wins, then fewer penalty points; players still equal share a rank.
+Aborted rounds do not count. When the end condition is met at a round's settlement (in the same
+transaction) the series finishes and its winner is recorded; a tie at the top goes to the better
+place in the latest round all tied players played. After a finished series, "play again" starts a
+new series with the same settings; open next-round rooms of a finished series become ordinary
+rooms.
+
+## 21. Spectators
+
+A host may allow spectators (`rooms.allowSpectators`). A spectator joins like a player (room
+password if any; removed users stay out; at most 20) and may leave at any time without affecting
+the match. Spectators receive a **public projection**, built on the server from the same data as
+the players' views minus every private field: seats with card counts, passes, places, connection,
+the table, the turn and its deadline, the rules, and the public move list. No hand reaches a
+spectator while the round is played; leftover hands (`revealedCards`) and the result appear only
+after a normal finish, exactly as for the players. Spectators cannot play, pass, change settings,
+start or control anything: every such request is refused (403).

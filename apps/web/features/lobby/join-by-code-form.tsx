@@ -25,7 +25,15 @@ export function JoinByCodeForm() {
     defaultValues: { code: '', password: '' },
   });
   const join = useMutation({
-    mutationFn: (values: { code: string; password?: string }) => source.joinRoomByCode(values),
+    // `spectate`: watch the room instead of taking a seat.
+    mutationFn: ({
+      spectate,
+      ...values
+    }: {
+      code: string;
+      password?: string;
+      spectate: boolean;
+    }) => (spectate ? source.spectateByCode(values) : source.joinRoomByCode(values)),
     onSuccess: ({ roomId }) => router.push(`/room/${roomId}`),
     onError: (error) => {
       if (error instanceof ApiClientError && error.code === 'INVALID_ROOM_PASSWORD')
@@ -36,7 +44,7 @@ export function JoinByCodeForm() {
   return (
     <form
       noValidate
-      onSubmit={handleSubmit((values) => join.mutate(values))}
+      onSubmit={handleSubmit((values) => join.mutate({ ...values, spectate: false }))}
       aria-labelledby="join-code-heading"
       className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-felt-800/70 p-4"
     >
@@ -66,9 +74,18 @@ export function JoinByCodeForm() {
             {...register('password')}
           />
         ) : null}
-        <Button type="submit" loading={join.isPending} className="sm:mt-7">
-          Vào phòng
-        </Button>
+        <div className="flex gap-2 sm:mt-7">
+          <Button type="submit" loading={join.isPending && !join.variables?.spectate}>
+            Vào phòng
+          </Button>
+          <Button
+            variant="secondary"
+            loading={join.isPending && join.variables?.spectate === true}
+            onClick={handleSubmit((values) => join.mutate({ ...values, spectate: true }))}
+          >
+            Xem
+          </Button>
+        </div>
       </div>
       {!needsPassword ? (
         <button

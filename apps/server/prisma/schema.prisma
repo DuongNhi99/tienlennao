@@ -75,22 +75,35 @@ model User {
   auditLogs               AdminAuditLog[]
   ruleConfigsCreated      GameRuleConfiguration[]
   adjustmentsMade         WalletTransaction[]      @relation("AdjustmentActor")
+  spectating              RoomSpectator[]
+  invitationsSent         RoomInvitation[]         @relation("InvitationInviter")
+  invitationsReceived     RoomInvitation[]         @relation("InvitationInvitee")
+  seriesHosted            GameSeries[]             @relation("SeriesHost")
+  seriesWon               GameSeries[]             @relation("SeriesWinner")
+  penalties               MatchPenalty[]
 
   @@index([status])
   @@index([createdAt])
   @@map("users")
 }
 
+enum ProfileVisibility {
+  PUBLIC
+  PRIVATE
+}
+
 model UserProfile {
-  userId        String   @id @db.Uuid
-  displayName   String   @db.VarChar(32)
-  avatarUrl     String?  @db.VarChar(512)
-  locale        String   @default("vi") @db.VarChar(8)
+  userId            String            @id @db.Uuid
+  displayName       String            @db.VarChar(32)
+  avatarUrl         String?           @db.VarChar(512)
+  locale            String            @default("vi") @db.VarChar(8)
+  /// PRIVATE hides statistics, recent rounds and achievements from other players.
+  profileVisibility ProfileVisibility @default(PUBLIC)
   /// Denormalized counters updated inside the settlement transaction. Only FINISHED matches count.
-  matchesPlayed Int      @default(0)
-  matchesWon    Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  matchesPlayed     Int               @default(0)
+  matchesWon        Int               @default(0)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -269,10 +282,19 @@ model Room {
   /// Argon2id hash of an optional private-room password.
   passwordHash     String?
   entryFee         Int            @default(0)
+  /// 2–4 (CHECK in migration SQL).
   maxPlayers       Int            @default(4)
   turnTimerSeconds Int            @default(30)
   status           RoomStatus     @default(WAITING)
   ruleConfigId     String?        @db.Uuid
+  /// Rules chosen by the host (validated by the shared rules schema); null = the preset's.
+  ruleSnapshot     Json?
+  allowSpectators  Boolean        @default(false)
+  /// Set when the room plays one round of a multi-round series.
+  seriesId         String?        @db.Uuid
+  roundNumber      Int?
+  /// Players and spectators the host removed; they cannot come back to this room.
+  removedUserIds   String[]       @default([]) @db.Uuid
   /// Idempotency key supplied by the creator to de-duplicate create requests.
   createRequestId  String?        @db.VarChar(128)
   expiresAt        DateTime?
@@ -286,7 +308,10 @@ model Room {
   rematchRoom  Room?                  @relation("Rematch", fields: [rematchRoomId], references: [id], onDelete: SetNull)
   rematchOf    Room?                  @relation("Rematch")
   ruleConfig   GameRuleConfiguration? @relation(fields: [ruleConfigId], references: [id], onDelete: Restrict)
+  series       GameSeries?            @relation(fields: [seriesId], references: [id], onDelete: Restrict)
   players      RoomPlayer[]
+  spectators   RoomSpectator[]
+  invitations  RoomInvitation[]
   matches      Match[]
   chatMessages ChatMessage[]
   reports      PlayerReport[]
@@ -294,6 +319,7 @@ model Room {
   @@unique([hostId, createRequestId])
   @@index([status, visibility, createdAt])
   @@index([hostId])
+  @@index([seriesId])
   @@map("rooms")
 }
 
@@ -315,6 +341,103 @@ model RoomPlayer {
 
   @@unique([roomId, seatIndex])
   @@map("room_players")
+}
+
+/// Watching a room without a seat. Spectators only ever receive the public projection of a
+/// match (no hands until it has finished); see GameService.spectatorView.
+model RoomSpectator {
+  id       String   @id @default(uuid()) @db.Uuid
+  roomId   String   @db.Uuid
+  userId   String   @db.Uuid
+  joinedAt DateTime @default(now())
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([userId])
+  @@map("room_spectators")
+}
+
+enum InvitationKind {
+  /// To one player: single use, accepted or rejected by that player only.
+  DIRECT
+  /// A shareable link: reusable by anyone holding it until it expires or is cancelled.
+  LINK
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+/// Room invitations. Link tokens are 32 random bytes; only their SHA-256 hash is stored, so a
+/// link is shown once, to its creator.
+model RoomInvitation {
+  id          String           @id @default(uuid()) @db.Uuid
+  roomId      String           @db.Uuid
+  inviterId   String           @db.Uuid
+  inviteeId   String?          @db.Uuid
+  kind        InvitationKind
+  tokenHash   String?          @unique @db.VarChar(64)
+  status      InvitationStatus @default(PENDING)
+  expiresAt   DateTime
+  respondedAt DateTime?
+  /// Times a LINK invitation seated someone.
+  useCount    Int              @default(0)
+  createdAt   DateTime         @default(now())
+
+  room    Room  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  inviter User  @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee User? @relation("InvitationInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@index([inviteeId, status])
+  @@index([roomId, status])
+  @@map("room_invitations")
+}
+
+enum SeriesStatus {
+  IN_PROGRESS
+  FINISHED
+  CANCELLED
+}
+
+enum SeriesEndCondition {
+  /// After `targetRounds` finished rounds.
+  ROUNDS
+  /// As soon as a player's cumulative score reaches `targetScore`.
+  TARGET_SCORE
+  /// When the host ends it.
+  MANUAL
+}
+
+/// A multi-round match (docs/GAME_RULES.md §20). Each round is an ordinary room and match;
+/// cumulative scores are the sum of the rounds' `match_players.roundScore`.
+model GameSeries {
+  id           String             @id @default(uuid()) @db.Uuid
+  hostId       String             @db.Uuid
+  status       SeriesStatus       @default(IN_PROGRESS)
+  endCondition SeriesEndCondition
+  targetRounds Int?
+  targetScore  Int?
+  /// The rules of every round, fixed when the first round starts.
+  ruleSnapshot Json?
+  roundsPlayed Int                @default(0)
+  winnerId     String?            @db.Uuid
+  finishedAt   DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  host    User    @relation("SeriesHost", fields: [hostId], references: [id], onDelete: Restrict)
+  winner  User?   @relation("SeriesWinner", fields: [winnerId], references: [id], onDelete: Restrict)
+  rooms   Room[]
+  matches Match[]
+
+  @@index([status, createdAt])
+  @@map("game_series")
 }
 
 /// Quick-match queue, shared by every API instance. One row per searching player; `roomId`
@@ -357,18 +480,24 @@ model Match {
   finishedAt       DateTime?
   /// Set once inside the settlement transaction; guards against double settlement.
   settledAt        DateTime?
+  /// The series this match is a round of, and which round (1-based).
+  seriesId         String?     @db.Uuid
+  roundNumber      Int?
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
   room               Room                @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  series             GameSeries?         @relation(fields: [seriesId], references: [id], onDelete: Restrict)
   players            MatchPlayer[]
   events             MatchEvent[]
+  penalties          MatchPenalty[]
   walletTransactions WalletTransaction[]
   reports            PlayerReport[]
 
   @@index([roomId])
   @@index([status, createdAt])
   @@index([finishedAt])
+  @@index([seriesId])
   @@map("matches")
 }
 
@@ -390,6 +519,17 @@ model MatchPlayer {
   cardsRemaining Int?
   /// Net coin change from this match (rewards minus entry fee); mirrors the ledger.
   coinDelta      Int?
+  /// Per-round statistics, written once at settlement from the final engine state. Null for
+  /// rounds settled before they existed until `pnpm db:backfill` fills them in.
+  roundScore     Int?
+  penaltyPoints  Int?
+  cardsPlayed    Int?
+  chopsMade      Int?
+  /// Chops of 2s (a single 2 or a pair of 2s).
+  twosChopped    Int?
+  chopsReceived  Int?
+  /// 2s still held when the round ended by normal play (thúi heo).
+  twosLeft       Int?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -418,21 +558,48 @@ enum MatchEventType {
 
 /// Ordered, append-only log of authoritative match actions (audit + replay + recovery).
 model MatchEvent {
-  id          String         @id @default(uuid()) @db.Uuid
-  matchId     String         @db.Uuid
-  sequence    Int
-  type        MatchEventType
-  actorUserId String?        @db.Uuid
+  id           String         @id @default(uuid()) @db.Uuid
+  matchId      String         @db.Uuid
+  sequence     Int
+  type         MatchEventType
+  actorUserId  String?        @db.Uuid
   /// Client-supplied action ID for idempotency (unique per match when present).
-  actionId    String?        @db.VarChar(64)
-  payload     Json
-  createdAt   DateTime       @default(now())
+  actionId     String?        @db.VarChar(64)
+  payload      Json
+  /// The match's state version after this event (null for events written before it existed).
+  stateVersion Int?
+  createdAt    DateTime       @default(now())
 
   match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
 
   @@unique([matchId, sequence])
   @@unique([matchId, actionId])
   @@map("match_events")
+}
+
+/// Leftover penalties of a finished round, as charged (docs/GAME_RULES.md §11). Append-only;
+/// `penaltyKey` is unique per match, seat, kind and cards, so a hand is never charged twice.
+model MatchPenalty {
+  id          String   @id @default(uuid()) @db.Uuid
+  matchId     String   @db.Uuid
+  userId      String   @db.Uuid
+  seatIndex   Int
+  /// LEFTOVER_PENALTY_KINDS in @tienlen/shared.
+  kind        String   @db.VarChar(32)
+  cards       String[]
+  points      Int
+  /// The rule setting behind it, e.g. "leftoverPenalties.redTwo".
+  rule        String   @db.VarChar(64)
+  explanation String   @db.VarChar(255)
+  penaltyKey  String   @unique @db.VarChar(200)
+  createdAt   DateTime @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Restrict)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([matchId])
+  @@index([userId, createdAt])
+  @@map("match_penalties")
 }
 
 // ─── Rewards & achievements ─────────────────────────────────────────────────

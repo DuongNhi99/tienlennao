@@ -9,7 +9,7 @@ import {
   listCombinations,
 } from './combinations';
 import { detectInstantWin, type LeftoverPenalty, scoreLeftoverHand } from './hand-analysis';
-import { type GameRules, gameRulesSchema, type InstantWinKind } from './rules';
+import { type GameRules, gameRulesSchema, type InstantWinKind, roundScore } from './rules';
 
 /**
  * The deterministic match engine (docs/GAME_RULES.md). Every function is pure: it never
@@ -410,6 +410,8 @@ export interface PlacementResult {
   remainingCards: CardId[];
   penalties: LeftoverPenalty[];
   penaltyPoints: number;
+  /** Place points minus penalties, by `rules.scoring` (docs/GAME_RULES.md §11a). */
+  roundScore: number;
 }
 
 export interface MatchOutcome {
@@ -422,8 +424,8 @@ export interface MatchOutcome {
 }
 
 /**
- * Final placements and penalties (docs/GAME_RULES.md §10–12). Finished players keep their
- * finishing order; the rest follow by fewest cards, then seat order after the winner.
+ * Final placements, penalties and round scores (docs/GAME_RULES.md §10–12). Finished players
+ * keep their finishing order; the rest follow by fewest cards, then seat order after the winner.
  */
 export function calculateMatchResult(state: MatchState): MatchOutcome {
   const winnerSeat = determineWinner(state);
@@ -444,12 +446,14 @@ export function calculateMatchResult(state: MatchState): MatchOutcome {
       reason === 'NORMAL' && remainingCards.length > 0
         ? scoreLeftoverHand(remainingCards, state.rules)
         : [];
+    const penaltyPoints = penalties.reduce((sum, item) => sum + item.points, 0);
     return {
       seat,
       placement: index + 1,
       remainingCards,
       penalties,
-      penaltyPoints: penalties.reduce((sum, item) => sum + item.points, 0),
+      penaltyPoints,
+      roundScore: roundScore(state.rules, players, index + 1, penaltyPoints),
     };
   });
   return { reason, winnerSeat, instantWin: state.instantWin, placements, chops: state.chops };

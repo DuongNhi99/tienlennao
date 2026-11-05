@@ -26,11 +26,12 @@ test('history lists matches and shows a match with its public timeline', async (
 
 test('leaderboard switches between boards', async ({ page }) => {
   await page.goto('/leaderboard');
-  const table = page.getByRole('table', { name: 'Thắng trong tuần' });
+  const table = page.getByRole('table', { name: 'Thắng · Tuần này' });
   await expect(table.getByRole('row')).toHaveCount(8);
   await page.getByRole('tab', { name: 'Tỉ lệ thắng' }).click();
+  await page.getByRole('radio', { name: 'Toàn thời gian' }).click();
   await expect(page.getByText(/Cần ít nhất 10 ván/)).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Tỉ lệ thắng' })).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Tỉ lệ thắng · Toàn thời gian' })).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
 

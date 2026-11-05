@@ -15,20 +15,28 @@ import {
   calculateMatchResult,
   calculatePayouts,
   canPass,
+  describePenalty,
   type EngineEvent,
   type ErrorCode,
   GAME_VIOLATION_ERROR_CODES,
+  LEFTOVER_PENALTY_RULES,
   MATCH_TRANSITIONS,
   type MatchResult,
   type MatchState,
   type PassRequest,
+  penaltyKey,
   type PlayCardsRequest,
   type PlayerGameView,
   playerGameViewSchema,
   restoreMatchState,
   ROOM_TRANSITIONS,
+  roundStatistics,
+  type SpectatorGameView,
+  spectatorGameViewSchema,
   startMatch,
+  type TimelineEvent,
   toChopResults,
+  toTimelineEvent,
 } from '@tienlen/shared';
 import { AppException } from '../common/errors/app.exception';
 import { describeError } from '../common/errors/describe-error';
@@ -36,11 +44,15 @@ import { lockMatch, lockRoom } from '../common/prisma/prisma-helpers';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { playerSelect, RoomsService } from '../rooms/rooms.service';
+import { SpectatorsService } from '../rooms/spectators.service';
+import { SeriesService } from '../series/series.service';
 import { LedgerService } from '../wallet/ledger.service';
 import { RewardsService } from '../wallet/rewards.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Dealer } from './dealer';
-import { RulePresetsService } from './rule-presets.service';
+
+/** At most this many timeline events per request (a round has a few hundred at most). */
+const EVENTS_PAGE = 500;
 
 /** Extra time after the displayed deadline before the timeout action runs (network latency). */
 const TURN_GRACE_MS = 1_000;
@@ -69,7 +81,12 @@ function readSnapshot(value: Prisma.JsonValue | null): MatchSnapshot {
 
 const viewInclude = {
   players: { orderBy: { seatIndex: 'asc' }, include: { user: { select: playerSelect } } },
-  room: { select: { players: { select: { userId: true, disconnectedAt: true } } } },
+  room: {
+    select: {
+      players: { select: { userId: true, disconnectedAt: true } },
+      _count: { select: { spectators: true } },
+    },
+  },
 } satisfies Prisma.MatchInclude;
 
 const BAD_REQUEST_CODES: ReadonlySet<ErrorCode> = new Set([
@@ -115,8 +132,9 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly presets: RulePresetsService,
     private readonly rooms: RoomsService,
+    private readonly spectators: SpectatorsService,
+    private readonly series: SeriesService,
     private readonly realtime: RealtimeService,
     private readonly dealer: Dealer,
     private readonly ledger: LedgerService,
@@ -186,7 +204,11 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       assertTransition(MATCH_TRANSITIONS, 'CREATED', 'DEALING');
       assertTransition(MATCH_TRANSITIONS, 'DEALING', 'PLAYING');
 
-      const rules = await this.presets.rulesFor(room.ruleConfigId);
+      // The host's rules (or the preset's); a series fixes them at its first round.
+      const roomRules = await this.rooms.rulesOf(room);
+      const rules = room.seriesId
+        ? await this.series.rulesForRound(tx, room.seriesId, roomRules)
+        : roomRules;
       // 2–4 players, numbered 0…n-1 in room-seat order for the match.
       const hands = this.dealer.deal(room.players.length);
       const previousWinnerSeat =
@@ -207,6 +229,8 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
           stateVersion: state.version,
           stateSnapshot: this.snapshot(state, deadline),
           startedAt: now,
+          seriesId: room.seriesId,
+          roundNumber: room.roundNumber,
           players: {
             create: room.players.map((p, seatIndex) => ({ userId: p.userId, seatIndex })),
           },
@@ -216,12 +240,15 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
               type: 'DEALT',
               // The full deal stays server-side (audit and replay); it is never sent to clients.
               payload: { hands: state.hands, openingSeat: state.turnSeat },
+              stateVersion: 0,
             },
           },
         },
         include: { players: true },
       });
       await tx.room.update({ where: { id: roomId }, data: { status: 'IN_PROGRESS' } });
+      // Invitations to a table that has started can no longer be used.
+      await this.rooms.cancelInvitations(tx, roomId);
       // Entry fees are charged now, for everyone or (on INSUFFICIENT_COINS) for no one.
       if (room.entryFee > 0) {
         for (const { userId } of match.players) {
@@ -234,7 +261,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
           });
         }
       }
-      await this.writeEvents(tx, match.id, 1, events, null, null);
+      await this.writeEvents(tx, match.id, 1, events, null, null, state.version);
       if (state.status === 'FINISHED') await this.finalize(tx, match.id, roomId, state);
 
       return {
@@ -343,53 +370,52 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
 
   /** The caller's own view: their hand, and only counts for everyone else's. */
   async view(roomId: string, userId: string): Promise<PlayerGameView> {
-    const match = await this.prisma.match.findFirst({
-      where: { roomId },
-      orderBy: { createdAt: 'desc' },
-      include: viewInclude,
-    });
-    if (!match) throw new AppException('NOT_FOUND', HttpStatus.NOT_FOUND);
+    const match = await this.latestMatch(roomId);
     const me = match.players.find((p) => p.userId === userId);
     if (!me) throw new AppException('FORBIDDEN', HttpStatus.FORBIDDEN);
-
-    const { engine, turnDeadline } = readSnapshot(match.stateSnapshot);
+    const { engine } = readSnapshot(match.stateSnapshot);
     const finished = match.status !== 'PLAYING';
-    // Leftover hands are shown face up after a normal finish, never during play or on abort.
-    const reveal = match.status === 'FINISHED';
-    const disconnected = new Set(
-      match.room.players.filter((p) => p.disconnectedAt !== null).map((p) => p.userId),
-    );
     return playerGameViewSchema.parse({
-      matchId: match.id,
-      roomId,
-      status: match.status,
-      stateVersion: match.stateVersion,
-      entryFee: match.entryFee,
+      ...this.publicProjection(match),
       mySeat: me.seatIndex,
       myHand: engine.hands[me.seatIndex],
-      seats: match.players.map((p) => {
-        const finishIndex = engine.finishOrder.indexOf(p.seatIndex);
-        return {
-          ...this.rooms.publicPlayer(p.user),
-          seatIndex: p.seatIndex,
-          cardCount: engine.hands[p.seatIndex]!.length,
-          hasPassed: engine.passed[p.seatIndex],
-          finishedPlace: finished ? p.placement : finishIndex === -1 ? null : finishIndex + 1,
-          connected: !disconnected.has(p.userId),
-          revealedCards: reveal ? engine.hands[p.seatIndex] : null,
-        };
-      }),
-      currentTrick: engine.table
-        ? { seatIndex: engine.table.seat, cards: engine.table.combination.cards }
-        : null,
-      turnSeat: finished ? null : engine.turnSeat,
-      turnDeadline: finished ? null : turnDeadline,
       canPass: !finished && canPass(engine, me.seatIndex),
-      rules: engine.rules,
       // Before the first play the opener holds the turn and the opening card; nobody else is
       // told which card that is (with 2–3 players it is not always 3♠).
       openingCard: !finished && engine.turnSeat === me.seatIndex ? engine.openingCard : null,
     });
+  }
+
+  /**
+   * A spectator's view (docs/GAME_RULES.md §21): the public projection only. It is built from
+   * the same data as a player's view minus every private field, so no hand can reach a
+   * spectator while the match is played. Players use their own view.
+   */
+  async spectatorView(roomId: string, userId: string): Promise<SpectatorGameView> {
+    if (!(await this.spectators.isSpectator(roomId, userId))) {
+      throw new AppException('FORBIDDEN', HttpStatus.FORBIDDEN);
+    }
+    const match = await this.latestMatch(roomId);
+    return spectatorGameViewSchema.parse({
+      ...this.publicProjection(match),
+      spectator: true,
+    });
+  }
+
+  /**
+   * The public moves of the room's latest match after `after` (sequence), for its players and
+   * spectators: plays (played cards are public), passes, timeouts, tricks, finishes and
+   * presence. The deal is never included.
+   */
+  async events(roomId: string, userId: string, after: number): Promise<TimelineEvent[]> {
+    const match = await this.latestMatch(roomId);
+    await this.assertCanWatch(roomId, match, userId);
+    const rows = await this.prisma.matchEvent.findMany({
+      where: { matchId: match.id, sequence: { gt: after } },
+      orderBy: { sequence: 'asc' },
+      take: EVENTS_PAGE,
+    });
+    return rows.map(toTimelineEvent).filter((e): e is TimelineEvent => e !== null);
   }
 
   async result(roomId: string, userId: string): Promise<MatchResult> {
@@ -401,9 +427,9 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       },
     });
     if (!match) throw new AppException('NOT_FOUND', HttpStatus.NOT_FOUND);
-    if (!match.players.some((p) => p.userId === userId)) {
-      throw new AppException('FORBIDDEN', HttpStatus.FORBIDDEN);
-    }
+    // Results (with the revealed hands) are public once the match has finished: players and
+    // the room's spectators may read them.
+    await this.assertCanWatch(roomId, match, userId);
     const { engine } = readSnapshot(match.stateSnapshot);
     const outcome = calculateMatchResult(engine);
     const scored = new Map(outcome.placements.map((p) => [p.seat, p]));
@@ -418,6 +444,8 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
         coinDelta: p.coinDelta ?? 0,
         penalties: scored.get(p.seatIndex)?.penalties ?? [],
         penaltyPoints: scored.get(p.seatIndex)?.penaltyPoints ?? 0,
+        // As settled; rounds settled before round scores existed fall back to the engine.
+        roundScore: p.roundScore ?? scored.get(p.seatIndex)?.roundScore ?? 0,
       })),
       reason: outcome.reason,
       instantWinKind: outcome.instantWin?.kind ?? null,
@@ -456,6 +484,68 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     return match.id;
   }
 
+  private async latestMatch(roomId: string) {
+    const match = await this.prisma.match.findFirst({
+      where: { roomId },
+      orderBy: { createdAt: 'desc' },
+      include: viewInclude,
+    });
+    if (!match) throw new AppException('NOT_FOUND', HttpStatus.NOT_FOUND);
+    return match;
+  }
+
+  /** Players of the match and the room's spectators may watch it; anyone else is refused. */
+  private async assertCanWatch(
+    roomId: string,
+    match: { players: { userId: string }[] },
+    userId: string,
+  ): Promise<void> {
+    if (match.players.some((p) => p.userId === userId)) return;
+    if (await this.spectators.isSpectator(roomId, userId)) return;
+    throw new AppException('FORBIDDEN', HttpStatus.FORBIDDEN);
+  }
+
+  /**
+   * Everything about a match that everyone at the table may know: seats with card counts,
+   * passes, places and connection, the table, the turn and its deadline, the rules. Hands are
+   * never part of it; leftover hands appear (`revealedCards`) only after a normal finish.
+   */
+  private publicProjection(match: Prisma.MatchGetPayload<{ include: typeof viewInclude }>) {
+    const { engine, turnDeadline } = readSnapshot(match.stateSnapshot);
+    const finished = match.status !== 'PLAYING';
+    const reveal = match.status === 'FINISHED';
+    const disconnected = new Set(
+      match.room.players.filter((p) => p.disconnectedAt !== null).map((p) => p.userId),
+    );
+    return {
+      matchId: match.id,
+      roomId: match.roomId,
+      status: match.status,
+      stateVersion: match.stateVersion,
+      entryFee: match.entryFee,
+      seats: match.players.map((p) => {
+        const finishIndex = engine.finishOrder.indexOf(p.seatIndex);
+        return {
+          ...this.rooms.publicPlayer(p.user),
+          seatIndex: p.seatIndex,
+          cardCount: engine.hands[p.seatIndex]!.length,
+          hasPassed: engine.passed[p.seatIndex],
+          finishedPlace: finished ? p.placement : finishIndex === -1 ? null : finishIndex + 1,
+          connected: !disconnected.has(p.userId),
+          revealedCards: reveal ? engine.hands[p.seatIndex] : null,
+        };
+      }),
+      currentTrick: engine.table
+        ? { seatIndex: engine.table.seat, cards: engine.table.combination.cards }
+        : null,
+      turnSeat: finished ? null : engine.turnSeat,
+      turnDeadline: finished ? null : turnDeadline,
+      rules: engine.rules,
+      spectatorCount: match.room._count.spectators,
+      roundNumber: match.roundNumber,
+    };
+  }
+
   private snapshot(engine: MatchState, deadline: Date | null): Prisma.InputJsonValue {
     const snapshot: MatchSnapshot = {
       v: 1,
@@ -492,6 +582,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       events,
       actorUserId,
       actionId,
+      state.version,
     );
     await tx.match.update({
       where: { id: match.id },
@@ -516,6 +607,8 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     events: EngineEvent[],
     actorUserId: string | null,
     actionId: string | null,
+    /** The match's version after these events. */
+    stateVersion: number,
   ): Promise<void> {
     if (!events.length) return;
     await tx.matchEvent.createMany({
@@ -526,15 +619,16 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
         actorUserId: i === 0 ? actorUserId : null,
         actionId: i === 0 ? actionId : null,
         payload: payload as Prisma.InputJsonValue,
+        stateVersion,
       })),
     });
   }
 
   /**
    * PLAYING → RESOLVING → FINISHED, and settlement (docs/ECONOMY.md): placements, payouts,
-   * coinDelta, statistics, achievements and `settledAt` are written in the transaction that
-   * ended play, under the match lock, so a match is settled exactly once. The room closes and
-   * its seats are freed.
+   * coinDelta, round statistics and scores, penalty records, statistics, achievements, series
+   * progress and `settledAt` are written in the transaction that ended play, under the match
+   * lock, so a match is settled exactly once. The room closes and its seats are freed.
    */
   private async finalize(
     tx: Prisma.TransactionClient,
@@ -547,18 +641,44 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
     assertTransition(ROOM_TRANSITIONS, 'IN_PROGRESS', 'FINISHED');
     const match = await tx.match.findUniqueOrThrow({
       where: { id: matchId },
-      select: { entryFee: true, settledAt: true, room: { select: { code: true } } },
+      select: {
+        entryFee: true,
+        settledAt: true,
+        seriesId: true,
+        room: { select: { code: true } },
+      },
     });
     if (match.settledAt) throw new Error(`Match ${matchId} is already settled`);
     const outcome = calculateMatchResult(state);
     const players = await tx.matchPlayer.findMany({ where: { matchId } });
     const payouts = calculatePayouts(match.entryFee, players.length);
+    const stats = new Map(
+      roundStatistics(outcome, state.rules.cardsPerPlayer).map((s) => [s.seat, s]),
+    );
     const now = new Date();
 
     const userAt = (seat: number) => players.find((p) => p.seatIndex === seat)!.userId;
+    // Penalty records (docs/GAME_RULES.md §11): unique keys, so a hand is never charged twice.
+    await tx.matchPenalty.createMany({
+      data: outcome.placements.flatMap((placement) =>
+        placement.penalties.map((item) => ({
+          matchId,
+          userId: userAt(placement.seat),
+          seatIndex: placement.seat,
+          kind: item.kind,
+          cards: item.cards,
+          points: item.points,
+          rule: `leftoverPenalties.${LEFTOVER_PENALTY_RULES[item.kind]}`,
+          explanation: describePenalty(item),
+          penaltyKey: penaltyKey(matchId, placement.seat, item),
+        })),
+      ),
+      skipDuplicates: true,
+    });
     for (const placement of outcome.placements) {
       const userId = userAt(placement.seat);
       const payout = payouts[placement.placement - 1]!;
+      const { seat: _seat, placement: _place, ...roundStats } = stats.get(placement.seat)!;
       if (payout > 0) {
         await this.ledger.post(tx, {
           userId,
@@ -576,6 +696,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
           placement: placement.placement,
           cardsRemaining: placement.remainingCards.length,
           coinDelta: payout - match.entryFee,
+          ...roundStats,
         },
       });
     }
@@ -583,6 +704,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       where: { id: matchId },
       data: { status: 'FINISHED', finishedAt: now, settledAt: now },
     });
+    if (match.seriesId) await this.series.roundFinished(tx, match.seriesId);
     await tx.userProfile.updateMany({
       where: { userId: { in: players.map((p) => p.userId) } },
       data: { matchesPlayed: { increment: 1 } },
@@ -607,8 +729,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
         };
       }),
     );
-    await tx.roomPlayer.deleteMany({ where: { roomId } });
-    await tx.room.update({ where: { id: roomId }, data: { status: 'FINISHED', closedAt: now } });
+    await this.rooms.closeRoom(tx, roomId, 'FINISHED');
   }
 
   /**
@@ -660,6 +781,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
           type: 'MATCH_ABORTED',
           // The reason is for administrators; players only see that the match was cancelled.
           payload: { refunded: match.entryFee > 0 },
+          stateVersion: match.stateVersion,
         },
       });
       await this.notifications.create(
@@ -678,11 +800,7 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       );
       if (match.room.status === 'IN_PROGRESS') {
         assertTransition(ROOM_TRANSITIONS, 'IN_PROGRESS', 'CANCELLED');
-        await tx.roomPlayer.deleteMany({ where: { roomId: match.roomId } });
-        await tx.room.update({
-          where: { id: match.roomId },
-          data: { status: 'CANCELLED', closedAt: new Date() },
-        });
+        await this.rooms.closeRoom(tx, match.roomId, 'CANCELLED');
       }
       return {
         matchId,

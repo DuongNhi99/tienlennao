@@ -31,6 +31,10 @@ export const config = {
     '/history/:path*',
     '/leaderboard/:path*',
     '/notifications/:path*',
+    '/invitations/:path*',
+    '/invite/:path*',
+    '/series/:path*',
+    '/players/:path*',
     '/admin/:path*',
   ],
 };

@@ -8,6 +8,7 @@ import {
   REPORT_REASONS,
 } from '@tienlen/shared';
 import { Flag } from 'lucide-react';
+import Link from 'next/link';
 import { useState } from 'react';
 import { ChopList, PenaltyLines } from '@/components/game/match-penalties';
 // import { RevealedCards } from '@/components/game/revealed-cards';
@@ -148,6 +149,14 @@ export function HistoryDetail({ matchId }: { matchId: string }) {
           {m.entryFee > 0 ? `Cược ${formatCoins(m.entryFee)} xu` : 'Miễn phí'} · Mã phòng{' '}
           <span className="font-mono">{m.roomCode}</span>
         </p>
+        {m.seriesId && m.roundNumber ? (
+          <p className="mt-1 text-sm">
+            Ván {m.roundNumber} của một chuỗi ván ·{' '}
+            <Link href={`/series/${m.seriesId}`} className="text-gold-300 hover:underline">
+              Xem bảng điểm chuỗi
+            </Link>
+          </p>
+        ) : null}
       </div>
 
       <section
@@ -176,6 +185,12 @@ export function HistoryDetail({ matchId }: { matchId: string }) {
                 </span>
                 {p.cardsRemaining ? (
                   <span className="text-xs text-white/60">còn {p.cardsRemaining} lá</span>
+                ) : null}
+                {p.roundScore !== null ? (
+                  <span className="text-xs tabular-nums text-white/80">
+                    {p.roundScore > 0 ? '+' : ''}
+                    {p.roundScore} điểm
+                  </span>
                 ) : null}
                 {p.coinDelta !== null && m.entryFee > 0 ? (
                   <span

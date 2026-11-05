@@ -23,6 +23,7 @@
     "db:migrate": "pnpm --filter @tienlen/server db:migrate",
     "db:deploy": "pnpm --filter @tienlen/server db:deploy",
     "db:seed": "pnpm --filter @tienlen/server db:seed",
+    "db:backfill": "pnpm --filter @tienlen/server db:backfill",
     "db:set-role": "pnpm --filter @tienlen/server db:set-role",
     "db:studio": "pnpm --filter @tienlen/server db:studio",
     "db:embedded": "node scripts/embedded-postgres.mjs",

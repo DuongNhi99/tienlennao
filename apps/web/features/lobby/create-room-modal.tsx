@@ -2,25 +2,43 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { createRoomFormSchema, ROOM_NAME_MAX } from '@tienlen/shared';
+import {
+  createRoomFormSchema,
+  DEFAULT_GAME_RULES,
+  type GameRules,
+  ROOM_NAME_MAX,
+  type RoomOptions,
+} from '@tienlen/shared';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
-import { FormError, PasswordField, SelectField, TextField } from '@/components/ui/form-fields';
+import {
+  CheckboxField,
+  FormError,
+  PasswordField,
+  SelectField,
+  TextField,
+} from '@/components/ui/form-fields';
 import { Modal } from '@/components/ui/modal';
 import { QueryErrorState, LoadingSkeleton } from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
+import { ruleSetLabel } from '@/features/history/rules-summary';
+import { RuleEditor } from '@/features/rules/rule-editor';
+import { SeriesFields, type SeriesChoice, toSeriesSettings } from '@/features/rules/series-fields';
 import { errorMessage } from '@/lib/api/client';
 import { formatCoins } from '@/lib/format';
-import type { RoomOptions } from '@tienlen/shared';
 
 function CreateRoomForm({ options, onCancel }: { options: RoomOptions; onCancel: () => void }) {
   const source = useDataSource();
   const router = useRouter();
   // One idempotency key per opened form: double submits and retries create a single room.
   const [requestId] = useState(() => crypto.randomUUID());
+  // Untouched rules mean "the server's active preset"; any choice is sent as the room's rules.
+  const [rules, setRules] = useState<GameRules | null>(null);
+  const [editingRules, setEditingRules] = useState(false);
+  const [series, setSeries] = useState<SeriesChoice>({ mode: 'SINGLE', rounds: 5, score: 20 });
   const {
     register,
     handleSubmit,
@@ -34,6 +52,8 @@ function CreateRoomForm({ options, onCancel }: { options: RoomOptions; onCancel:
       entryFee: options.entryFees[0]!,
       turnTimerSeconds: options.turnTimers.includes(30) ? 30 : options.turnTimers[0]!,
       password: '',
+      maxPlayers: 4,
+      allowSpectators: false,
     },
   });
   const create = useMutation({
@@ -45,7 +65,14 @@ function CreateRoomForm({ options, onCancel }: { options: RoomOptions; onCancel:
   return (
     <form
       noValidate
-      onSubmit={handleSubmit((values) => create.mutate({ ...values, requestId }))}
+      onSubmit={handleSubmit((values) =>
+        create.mutate({
+          ...values,
+          requestId,
+          ...(rules ? { rules } : {}),
+          ...(series.mode === 'SINGLE' ? {} : { series: toSeriesSettings(series) }),
+        }),
+      )}
       className="flex flex-col gap-4"
     >
       <FormError message={create.isError ? errorMessage(create.error) : null} />
@@ -60,7 +87,7 @@ function CreateRoomForm({ options, onCancel }: { options: RoomOptions; onCancel:
         {(
           [
             ['PUBLIC', 'Công khai', 'Hiện trong danh sách phòng'],
-            ['PRIVATE', 'Riêng tư', 'Chỉ vào được bằng mã phòng'],
+            ['PRIVATE', 'Riêng tư', 'Chỉ vào được bằng mã phòng hoặc lời mời'],
           ] as const
         ).map(([value, label, hint]) => (
           <label
@@ -88,7 +115,7 @@ function CreateRoomForm({ options, onCancel }: { options: RoomOptions; onCancel:
           {...register('password')}
         />
       ) : null}
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-3">
         <SelectField
           label="Mức cược"
           error={errors.entryFee?.message}
@@ -111,9 +138,42 @@ function CreateRoomForm({ options, onCancel }: { options: RoomOptions; onCancel:
             </option>
           ))}
         </SelectField>
+        <SelectField
+          label="Số người tối đa"
+          error={errors.maxPlayers?.message}
+          {...register('maxPlayers', { valueAsNumber: true })}
+        >
+          {[4, 3, 2].map((count) => (
+            <option key={count} value={count}>
+              {count} người
+            </option>
+          ))}
+        </SelectField>
       </div>
+      <CheckboxField
+        label="Cho phép người xem (khán giả chỉ thấy bài đã đánh, không thấy bài trên tay)"
+        {...register('allowSpectators')}
+      />
+      <SeriesFields value={series} onChange={setSeries} />
+      <section className="flex flex-col gap-2 rounded-xl border border-white/10 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="flex-1 text-sm">
+            <span className="block font-medium">Luật chơi</span>
+            <span className="block text-xs text-white/60">
+              {rules ? ruleSetLabel(rules) : 'Luật mặc định của máy chủ (Miền Nam chuẩn)'}
+            </span>
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => setEditingRules((v) => !v)}>
+            {editingRules ? 'Thu gọn' : 'Chọn / chỉnh luật'}
+          </Button>
+        </div>
+        {editingRules ? (
+          <RuleEditor value={rules ?? DEFAULT_GAME_RULES} onChange={setRules} />
+        ) : null}
+      </section>
       <p className="text-xs text-white/60">
-        Phòng có 4 chỗ. Xu cược chỉ bị trừ khi ván đấu thực sự bắt đầu, không trừ khi tạo phòng.
+        Xu cược chỉ bị trừ khi ván đấu thực sự bắt đầu, không trừ khi tạo phòng. Luật được chốt khi
+        ván bắt đầu (với chuỗi ván: khi ván đầu bắt đầu).
       </p>
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onCancel} disabled={create.isPending}>

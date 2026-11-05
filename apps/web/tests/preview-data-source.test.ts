@@ -160,7 +160,7 @@ describe('preview data source — game', () => {
   it('judges plays with the rules engine and lets bots play legal moves to the end', async () => {
     await startPracticeMatch();
     const view = await waitForMyTurn();
-    expect(view).toMatchObject({ openingCard: '3S', rules: { specVersion: 3 } });
+    expect(view).toMatchObject({ openingCard: '3S', rules: { specVersion: 4 } });
     const base = { roomId: PRACTICE_ROOM, stateVersion: view.stateVersion };
     // The first play must contain 3♠.
     const other = view.myHand.find((card) => card !== '3S')!;
@@ -195,5 +195,36 @@ describe('preview data source — rewards', () => {
     expect(balance).toBe(before.balance + amount);
     await expectCode(source.claimDailyReward(), 'ACTION_ALREADY_PROCESSED');
     expect((await call(source.getCurrentUser())).balance).toBe(balance);
+  });
+});
+
+describe('preview: statistics, profiles and host controls', () => {
+  it('serves statistics, achievements and a profile that can be made private', async () => {
+    const me = await call(source.getCurrentUser());
+    const stats = await call(source.getMyStatistics());
+    expect(stats.roundsPlayed).toBe(me.matchesPlayed);
+    expect(stats.roundsWon).toBe(me.matchesWon);
+    expect((await call(source.getMyAchievements())).length).toBeGreaterThan(0);
+    const profile = await call(source.getProfile(me.id));
+    expect(profile).toMatchObject({ isMe: true, visibility: 'PUBLIC' });
+    const hidden = await call(source.setProfileVisibility('PRIVATE'));
+    expect(hidden.visibility).toBe('PRIVATE');
+  });
+
+  it('lets the host remove a player for good', async () => {
+    const { roomId } = await call(
+      source.createRoom({
+        visibility: 'PUBLIC',
+        entryFee: 0,
+        turnTimerSeconds: 30,
+        requestId: crypto.randomUUID(),
+      }),
+    );
+    const room = await call(source.getRoom(roomId));
+    expect(room.rules).not.toBeNull();
+    await expectCode(
+      source.removeMember(roomId, '00000000-0000-4000-8000-00000000dead'),
+      'NOT_FOUND',
+    );
   });
 });

@@ -12,6 +12,7 @@ import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { ApiClientError, errorMessage } from '@/lib/api/client';
 import { GameScreen } from './game-screen';
+import { SpectatorScreen } from './spectator-screen';
 import { WaitingRoom } from './waiting-room';
 
 /** Shows the waiting room or the game table depending on the server-side room status. */
@@ -67,5 +68,10 @@ export function RoomScreen({ roomId }: { roomId: string }) {
   }
 
   const inGame = room.data.matchId !== null && room.data.mySeat !== null;
-  return inGame ? <GameScreen room={room.data} /> : <WaitingRoom room={room.data} />;
+  if (inGame) return <GameScreen room={room.data} />;
+  // Spectators watch the public table once a match exists; before that, the waiting room.
+  if (room.data.isSpectator && room.data.matchId !== null) {
+    return <SpectatorScreen room={room.data} />;
+  }
+  return <WaitingRoom room={room.data} />;
 }
