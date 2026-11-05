@@ -5,6 +5,7 @@ export const queryKeys = {
   rooms: (filter?: RoomListFilter) =>
     filter ? (['rooms', filter] as const) : (['rooms'] as const),
   roomOptions: ['room-options'] as const,
+  currentRoom: ['current-room'] as const,
   room: (roomId: string) => ['room', roomId] as const,
   game: (roomId: string) => ['game', roomId] as const,
   matchResult: (roomId: string) => ['match-result', roomId] as const,

@@ -2,16 +2,15 @@
 
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
-  cardLabelVi,
-  COMBINATION_LABELS_VI,
   type HistoryPlayer,
   type MatchHistoryDetail,
   REPORT_REASON_LABELS_VI,
   REPORT_REASONS,
-  type TimelineEvent,
 } from '@tienlen/shared';
 import { Flag } from 'lucide-react';
 import { useState } from 'react';
+import { ChopList, PenaltyLines } from '@/components/game/match-penalties';
+import { RevealedCards } from '@/components/game/revealed-cards';
 import { UserAvatar } from '@/components/player/user-avatar';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { SelectField } from '@/components/ui/form-fields';
@@ -23,30 +22,10 @@ import { errorMessage } from '@/lib/api/client';
 import { cn } from '@/lib/cn';
 import { formatCoinDelta, formatCoins, formatDateTime } from '@/lib/format';
 import { showToast } from '@/lib/toast-store';
+import { describeEvent } from './describe-event';
 import { formatDuration, placementLabel } from './history-list';
-
-function describeEvent(event: TimelineEvent, name: (seat: number | null) => string): string {
-  switch (event.type) {
-    case 'PLAY': {
-      const cards = (event.cards ?? []).map(cardLabelVi).join(', ');
-      const kind = event.combinationType ? COMBINATION_LABELS_VI[event.combinationType] : '';
-      const chop = event.choppedSeat === null ? '' : ` — chặt ${name(event.choppedSeat)}`;
-      return `${name(event.seatIndex)} đánh ${kind.toLowerCase()}: ${cards}${chop}`;
-    }
-    case 'PASS':
-      return `${name(event.seatIndex)} bỏ lượt`;
-    case 'TURN_TIMEOUT':
-      return `${name(event.seatIndex)} hết giờ, máy tự đi thay`;
-    case 'TRICK_RESOLVED':
-      return `${name(event.seatIndex)} thắng vòng`;
-    case 'PLAYER_FINISHED':
-      return `${name(event.seatIndex)} hết bài, về hạng ${event.place}`;
-    case 'MATCH_FINISHED':
-      return `Ván kết thúc — ${name(event.seatIndex)} về nhất`;
-    case 'MATCH_ABORTED':
-      return 'Ván đấu bị hủy, phí vào bàn được hoàn lại';
-  }
-}
+import { MatchReplay } from './match-replay';
+import { summarizeRules } from './rules-summary';
 
 function ReportDialog({
   match,
@@ -155,6 +134,8 @@ export function HistoryDetail({ matchId }: { matchId: string }) {
   const ranked = [...m.players].sort(
     (a, b) => (a.placement ?? 9) - (b.placement ?? 9) || a.seatIndex - b.seatIndex,
   );
+  const leftovers = new Map(m.leftovers.map((l) => [l.seatIndex, l]));
+  const section = 'rounded-2xl border border-white/10 bg-felt-800/70 p-5';
 
   return (
     <div className="flex flex-col gap-5">
@@ -177,45 +158,77 @@ export function HistoryDetail({ matchId }: { matchId: string }) {
           Kết quả
         </h2>
         <ul className="flex flex-col divide-y divide-white/10">
-          {ranked.map((p) => (
-            <li key={p.userId} className="flex items-center gap-3 py-2">
-              <span className="w-6 text-center font-bold tabular-nums">{p.placement ?? '—'}</span>
-              <UserAvatar
-                name={p.displayName}
-                userId={p.userId}
-                avatarUrl={p.avatarUrl}
-                size="sm"
-              />
-              <span className="min-w-0 flex-1 truncate">
-                {p.displayName}
-                {p.seatIndex === m.mySeat ? ' (bạn)' : ''}
-              </span>
-              {p.cardsRemaining ? (
-                <span className="text-xs text-white/60">còn {p.cardsRemaining} lá</span>
-              ) : null}
-              {p.coinDelta !== null && m.entryFee > 0 ? (
-                <span
-                  className={cn(
-                    'font-semibold tabular-nums',
-                    p.coinDelta >= 0 ? 'text-emerald-300' : 'text-red-300',
-                  )}
-                >
-                  {formatCoinDelta(p.coinDelta)} xu
-                </span>
-              ) : null}
-              {p.seatIndex !== m.mySeat ? (
-                <Button
-                  variant="ghost"
+          {ranked.map((p) => {
+            const left = leftovers.get(p.seatIndex);
+            const owner = p.seatIndex === m.mySeat ? 'bạn' : p.displayName;
+            return (
+              <li key={p.userId} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2">
+                <span className="w-6 text-center font-bold tabular-nums">{p.placement ?? '—'}</span>
+                <UserAvatar
+                  name={p.displayName}
+                  userId={p.userId}
+                  avatarUrl={p.avatarUrl}
                   size="sm"
-                  aria-label={`Báo cáo ${p.displayName}`}
-                  icon={<Flag aria-hidden className="size-4" />}
-                  onClick={() => setReporting(p)}
                 />
-              ) : null}
-            </li>
-          ))}
+                <span className="min-w-0 flex-1 truncate">
+                  {p.displayName}
+                  {p.seatIndex === m.mySeat ? ' (bạn)' : ''}
+                </span>
+                {p.cardsRemaining ? (
+                  <span className="text-xs text-white/60">còn {p.cardsRemaining} lá</span>
+                ) : null}
+                {p.coinDelta !== null && m.entryFee > 0 ? (
+                  <span
+                    className={cn(
+                      'font-semibold tabular-nums',
+                      p.coinDelta >= 0 ? 'text-emerald-300' : 'text-red-300',
+                    )}
+                  >
+                    {formatCoinDelta(p.coinDelta)} xu
+                  </span>
+                ) : null}
+                {p.seatIndex !== m.mySeat ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Báo cáo ${p.displayName}`}
+                    icon={<Flag aria-hidden className="size-4" />}
+                    onClick={() => setReporting(p)}
+                  />
+                ) : null}
+                {left?.remainingCards.length ? (
+                  <RevealedCards
+                    cards={left.remainingCards}
+                    label={`Bài còn lại của ${owner}: ${left.remainingCards.length} lá`}
+                    className="basis-full justify-center [--card-w:1.75rem]"
+                  />
+                ) : null}
+                {left ? (
+                  <PenaltyLines
+                    penalties={left.penalties}
+                    penaltyPoints={left.penaltyPoints}
+                    owner={owner}
+                  />
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
+        {m.chops.length ? (
+          <div className="mt-4">
+            <ChopList chops={m.chops} playerName={(seat) => name(seat)} />
+          </div>
+        ) : null}
       </section>
+
+      {m.timeline.length ? (
+        <section aria-labelledby="replay-heading" className={section}>
+          <h2 id="replay-heading" className="mb-3 font-semibold">
+            Xem lại ván đấu
+          </h2>
+          <MatchReplay timeline={m.timeline} players={m.players.length} name={name} />
+        </section>
+      ) : null}
 
       <section
         aria-labelledby="timeline-heading"
@@ -239,6 +252,22 @@ export function HistoryDetail({ matchId }: { matchId: string }) {
           </ol>
         )}
       </section>
+
+      {m.rules ? (
+        <section aria-labelledby="rules-heading" className={section}>
+          <h2 id="rules-heading" className="mb-3 font-semibold">
+            Luật áp dụng
+          </h2>
+          <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+            {summarizeRules(m.rules).map((line) => (
+              <div key={line.label} className="contents">
+                <dt className="text-white/60">{line.label}</dt>
+                <dd>{line.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
 
       <ReportDialog match={m} player={reporting} onClose={() => setReporting(null)} />
     </div>

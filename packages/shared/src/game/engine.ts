@@ -5,7 +5,7 @@ import {
   canBeatCombination,
   classifyCombination,
   type Combination,
-  isSameShape,
+  isChop,
   listCombinations,
 } from './combinations';
 import { detectInstantWin, type LeftoverPenalty, scoreLeftoverHand } from './hand-analysis';
@@ -58,7 +58,14 @@ export type MatchEndReason = 'NORMAL' | 'INSTANT_WIN';
 
 /** Domain events; `type` matches the `MatchEventType` database enum. */
 export type EngineEvent =
-  | { type: 'PLAY'; seat: number; combination: Combination; choppedSeat: number | null }
+  | {
+      type: 'PLAY';
+      seat: number;
+      combination: Combination;
+      choppedSeat: number | null;
+      /** Present (true) only for a chop played out of turn (`bombs.outOfTurn`). */
+      outOfTurn?: true;
+    }
   | { type: 'PASS'; seat: number }
   | { type: 'TURN_TIMEOUT'; seat: number }
   | { type: 'TRICK_RESOLVED'; winnerSeat: number; leaderSeat: number }
@@ -120,12 +127,73 @@ function nextSeat(state: MatchState, from: number, test: (seat: number) => boole
   return null;
 }
 
-function checkTurn(state: MatchState, seat: number): GameViolation | null {
+function checkSeat(state: MatchState, seat: number): GameViolation | null {
   if (state.status !== 'PLAYING') return 'MATCH_NOT_PLAYING';
   if (!Number.isInteger(seat) || seat < 0 || seat >= state.hands.length) return 'INVALID_SEAT';
-  // Finished players never hold the turn, so this also rejects them.
-  if (state.turnSeat !== seat) return 'NOT_YOUR_TURN';
   return null;
+}
+
+function checkTurn(state: MatchState, seat: number): GameViolation | null {
+  // Finished players never hold the turn, so this also rejects them.
+  return checkSeat(state, seat) ?? (state.turnSeat !== seat ? 'NOT_YOUR_TURN' : null);
+}
+
+/**
+ * Everything a play is judged on, from one seat's point of view. The server builds it from the
+ * full state (`playContext`); clients build it from their own view, so both judge a selection
+ * with this same code (docs/GAME_RULES.md §14).
+ */
+export interface PlayContext {
+  rules: GameRules;
+  seat: number;
+  hand: readonly CardId[];
+  turnSeat: number | null;
+  table: TablePlay | null;
+  openingCard: CardId | null;
+  /** False once the seat has emptied its hand. */
+  active: boolean;
+}
+
+export type PlayCheck =
+  | { ok: true; combination: Combination; chop: boolean; outOfTurn: boolean }
+  | { ok: false; violation: GameViolation };
+
+export function playContext(state: MatchState, seat: number): PlayContext {
+  return {
+    rules: state.rules,
+    seat,
+    hand: state.hands[seat] ?? [],
+    turnSeat: state.turnSeat,
+    table: state.table,
+    openingCard: state.openingCard,
+    active: isActive(state, seat),
+  };
+}
+
+/**
+ * Whether `cards` may be played now (docs/GAME_RULES.md §4–6, §14). Out of turn, only a chop
+ * is allowed, and only under `bombs.outOfTurn`, by a player still in the match whose own play
+ * is not the one on the table.
+ */
+export function checkPlay(context: PlayContext, cards: readonly CardId[]): PlayCheck {
+  const { rules, seat, hand, table, openingCard } = context;
+  const fail = (violation: GameViolation): PlayCheck => ({ ok: false, violation });
+  const outOfTurn = context.turnSeat !== seat;
+  if (outOfTurn && (!rules.bombs.outOfTurn || table === null || !context.active)) {
+    return fail('NOT_YOUR_TURN');
+  }
+  if (cards.length === 0) return fail('EMPTY_SELECTION');
+  if (new Set(cards).size !== cards.length) return fail('DUPLICATE_CARDS');
+  if (!cards.every((card) => hand.includes(card))) return fail('CARDS_NOT_OWNED');
+  const combination = classifyCombination(cards, rules);
+  if (combination === null) return fail('INVALID_COMBINATION');
+  const chop = table !== null && isChop(combination, table.combination, rules);
+  if (outOfTurn && (!chop || table.seat === seat)) return fail('NOT_YOUR_TURN');
+  if (openingCard !== null && !cards.includes(openingCard)) return fail('MUST_PLAY_OPENING_CARD');
+  if (table !== null && !canBeatCombination(combination, table.combination, rules)) {
+    return fail('CANNOT_BEAT');
+  }
+  return { ok: true, combination, chop, outOfTurn };
 }
 
 /** The seat holding the weakest dealt card (3♠ under the default suit order). */
@@ -137,11 +205,23 @@ export function determineOpeningPlayer(
   return hands.findIndex((hand) => hand.includes(opening));
 }
 
+export interface StartOptions {
+  /**
+   * The seat in this match of the previous match's winner, when the same group plays again
+   * and that player is seated. Used only under `starter: 'PREVIOUS_WINNER'`.
+   */
+  previousWinnerSeat?: number | null;
+}
+
 /**
  * Creates the initial state from a deal. Checks instant wins (docs/GAME_RULES.md §12): if a
  * player has one, the returned state is already FINISHED.
  */
-export function startMatch(hands: readonly (readonly CardId[])[], rules: GameRules): Transition {
+export function startMatch(
+  hands: readonly (readonly CardId[])[],
+  rules: GameRules,
+  { previousWinnerSeat = null }: StartOptions = {},
+): Transition {
   const parsed = gameRulesSchema.parse(rules);
   const cards = hands.flat();
   if (
@@ -152,8 +232,18 @@ export function startMatch(hands: readonly (readonly CardId[])[], rules: GameRul
   ) {
     throw new Error('Invalid deal: 2–4 players, each with a full hand of distinct cards.');
   }
+  if (
+    previousWinnerSeat !== null &&
+    (!Number.isInteger(previousWinnerSeat) ||
+      previousWinnerSeat < 0 ||
+      previousWinnerSeat >= hands.length)
+  ) {
+    throw new Error('The previous winner must hold a seat in this match.');
+  }
 
-  const opener = determineOpeningPlayer(hands, parsed);
+  // The previous winner leads freely; otherwise the lowest card opens (docs/GAME_RULES.md §7).
+  const winnerLeads = parsed.starter === 'PREVIOUS_WINNER' && previousWinnerSeat !== null;
+  const opener = winnerLeads ? previousWinnerSeat : determineOpeningPlayer(hands, parsed);
   const state: MatchState = {
     rules: parsed,
     status: 'PLAYING',
@@ -163,7 +253,10 @@ export function startMatch(hands: readonly (readonly CardId[])[], rules: GameRul
     table: null,
     passed: hands.map(() => false),
     finishOrder: [],
-    openingCard: parsed.opening === 'HOLDER_MUST_PLAY_LOWEST' ? weakestCard(cards, parsed) : null,
+    openingCard:
+      !winnerLeads && parsed.opening === 'HOLDER_MUST_PLAY_LOWEST'
+        ? weakestCard(cards, parsed)
+        : null,
     chops: [],
     instantWin: null,
   };
@@ -225,31 +318,23 @@ function isMatchOver(state: MatchState): boolean {
 }
 
 export function applyPlay(state: MatchState, seat: number, cards: readonly CardId[]): ActionResult {
-  const turnViolation = checkTurn(state, seat);
-  if (turnViolation) return reject(turnViolation);
-  const hand = state.hands[seat]!;
-  if (cards.length === 0) return reject('EMPTY_SELECTION');
-  if (new Set(cards).size !== cards.length) return reject('DUPLICATE_CARDS');
-  if (!cards.every((card) => hand.includes(card))) return reject('CARDS_NOT_OWNED');
-  const combination = classifyCombination(cards, state.rules);
-  if (combination === null) return reject('INVALID_COMBINATION');
-  if (state.openingCard !== null && !cards.includes(state.openingCard)) {
-    return reject('MUST_PLAY_OPENING_CARD');
-  }
+  const seatViolation = checkSeat(state, seat);
+  if (seatViolation) return reject(seatViolation);
+  const check = checkPlay(playContext(state, seat), cards);
+  if (!check.ok) return reject(check.violation);
+  const { combination, chop, outOfTurn } = check;
   const { table } = state;
-  if (table !== null && !canBeatCombination(combination, table.combination, state.rules)) {
-    return reject('CANNOT_BEAT');
-  }
 
-  const choppedSeat =
-    table !== null && !isSameShape(combination, table.combination) ? table.seat : null;
-  const remaining = hand.filter((card) => !cards.includes(card));
+  const choppedSeat = chop ? table!.seat : null;
+  const remaining = state.hands[seat]!.filter((card) => !cards.includes(card));
   const finished = remaining.length === 0;
   const next: MatchState = {
     ...state,
     version: state.version + 1,
     hands: state.hands.map((h, s) => (s === seat ? remaining : h)),
     table: { seat, combination },
+    // A chop out of turn brings a player who had passed back into the trick.
+    passed: outOfTurn ? state.passed.map((value, s) => value && s !== seat) : state.passed,
     openingCard: null,
     finishOrder: finished ? [...state.finishOrder, seat] : state.finishOrder,
     chops:
@@ -257,7 +342,9 @@ export function applyPlay(state: MatchState, seat: number, cards: readonly CardI
         ? state.chops
         : [...state.chops, { seat, choppedSeat, combination, chopped: table!.combination }],
   };
-  const events: EngineEvent[] = [{ type: 'PLAY', seat, combination, choppedSeat }];
+  const events: EngineEvent[] = [
+    { type: 'PLAY', seat, combination, choppedSeat, ...(outOfTurn ? { outOfTurn: true } : {}) },
+  ];
   if (finished) {
     events.push({ type: 'PLAYER_FINISHED', seat, place: next.finishOrder.length });
     if (isMatchOver(next)) {
@@ -294,14 +381,16 @@ export function applyTimeout(state: MatchState, seat: number): ActionResult {
   return { ...result, events: [{ type: 'TURN_TIMEOUT', seat }, ...result.events] };
 }
 
-/** Every combination `seat` may legally play now (empty when it is not their turn). */
+/**
+ * Every combination `seat` may legally play now: empty when it is not their turn, except for
+ * out-of-turn chops under `bombs.outOfTurn`.
+ */
 export function legalPlays(state: MatchState, seat: number): Combination[] {
-  if (checkTurn(state, seat)) return [];
-  const { openingCard, table, rules } = state;
-  return listCombinations(state.hands[seat]!, rules).filter(
-    (combination) =>
-      (openingCard === null || combination.cards.includes(openingCard)) &&
-      (table === null || canBeatCombination(combination, table.combination, rules)),
+  if (checkSeat(state, seat)) return [];
+  if (state.turnSeat !== seat && (!state.rules.bombs.outOfTurn || state.table === null)) return [];
+  const context = playContext(state, seat);
+  return listCombinations(context.hand, state.rules).filter(
+    (combination) => checkPlay(context, combination.cards).ok,
   );
 }
 

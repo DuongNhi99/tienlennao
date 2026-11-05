@@ -1,5 +1,6 @@
 import {
   type ClientToServerEvents,
+  currentRoomSchema,
   currentUserSummarySchema,
   leaderboardSchema,
   matchHistoryDetailSchema,
@@ -97,6 +98,7 @@ export function createApiDataSource(): GameDataSource {
       });
     },
     getRoomOptions: () => apiRequest('/rooms/options', { schema: roomOptionsSchema }),
+    getCurrentRoom: () => apiRequest('/rooms/current', { schema: currentRoomSchema }),
     createRoom: (input) =>
       apiRequest('/rooms', { method: 'POST', body: input, schema: roomIdResponseSchema }),
     joinRoom: (roomId, password) =>

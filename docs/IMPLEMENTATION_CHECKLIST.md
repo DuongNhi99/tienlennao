@@ -211,6 +211,40 @@ Fixes made during Phase 8:
 `.github/workflows/ci.yml` has not run yet in this session: the repository's CI results are
 visible on GitHub after the push.
 
+## Rules, chặt, thúi heo and game lifecycle (rule spec v3) ✅
+
+Rule specification: [GAME_RULES.md](GAME_RULES.md) (spec v3, §5–7 and §16–19). Results:
+`pnpm lint`, `pnpm format:check` and `pnpm typecheck` passed; `pnpm test`: 237 shared (was
+174), 27 server, 45 web unit tests; `pnpm test:integration` 82/82 (was 78); preview browser
+suite: 55 passed, 2 skipped by design (the Android install test runs only on the phone project). The
+real-stack browser suite (`test:e2e:auth`) was not run for this change.
+
+Audit before the change: card order, combination detection, same-shape comparison, the bomb
+table, passing, trick resolution, leading after a finisher, instant wins and leftover penalties
+were correct and tested. The gaps were in what reached players and in configurability.
+
+| Item                                 | Status | Evidence                                                                                                                                    |
+| ------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rule spec v3, upgrade from v2        | ✅     | New settings default to v2 behaviour; v2 presets and running-match snapshots upgrade on read (`rules.test.ts`, `persistence.test.ts`)       |
+| 3 đôi thông over a pair of 2s        | ✅     | `bombs.threeConsecutivePairsBeatPairOfTwos` (off); longer runs keep it (`combinations.test.ts`)                                             |
+| Bombs over bombs                     | ✅     | `bombs.bombsBeatBombs` (on); off leaves bombs chopping 2s only                                                                              |
+| Out-of-turn chops (chặt ngang)       | ✅     | `bombs.outOfTurn` (off); engine, 300 simulated matches with random out-of-turn chops, HTTP integration test                                 |
+| Previous winner leads the rematch    | ✅     | `starter: 'PREVIOUS_WINNER'`; server finds the winner of the room this one rematches; integration test                                      |
+| Regional variant presets             | ✅     | `RULE_VARIANTS`; offered as templates in the admin preset form                                                                              |
+| One play check for server and client | ✅     | `checkPlay`; the view carries the rules (opening card to the opener only); the game screen disables invalid plays and says why              |
+| Thúi heo and chops reach players     | ✅     | Match result: penalty items and totals per player, reason, instant-win kind, chops; results modal groups 2s ("thúi đôi heo") first          |
+| Snapshots validated before use       | ✅     | `restoreMatchState`: shape, duplicate cards, pass flags, finished seats, table; a bad snapshot no longer stops other timers from resuming   |
+| Continue an unfinished game          | ✅     | `GET /rooms/current`; lobby banner "Tiếp tục ván"; "Rời bàn" with confirmation; new-game actions confirm or point back to the running match |
+| History: rules, leftovers, chops     | ✅     | History detail carries the rule snapshot, leftovers with penalties and chops (integration test)                                             |
+| Replay                               | ✅     | `buildReplay` from the public timeline, checked against real engine states after every action; step-through viewer in history               |
+| Preview backend on the real engine   | ✅     | Its own simplified rules are gone; bots use `chooseBotMove` (only legal plays); 200 bot-only matches in tests                               |
+| Out-of-turn chops in the UI          | ✅     | "Chặt" button and "chặt ngang" hint when the rules allow it (unit-tested hint); not yet exercised in a browser test                         |
+
+Fixes made while verifying: the first draft of snapshot validation refused instant-win
+matches (the winner finishes holding all 13 cards) and the integration suite caught it; the
+leak test now checks that every card named in a view is the viewer's own, since the opener's
+view also names the opening card.
+
 ## Decisions recorded so far
 
 - **Room lifecycle:** FINISHED, CANCELLED and EXPIRED are terminal. A rematch creates a new
@@ -225,8 +259,8 @@ visible on GitHub after the push.
   same rules for feedback. The server stays authoritative: it alone holds full states and
   runs actions.
 - **Rules:** see `docs/GAME_RULES.md`. Notable defaults: 3♠ must open; passing locks a player
-  out of the trick; play continues until three players finish; no out-of-turn chops; no
-  final-play restrictions; no "cóng". Chops are recorded but carry no points until Phase 6
+  out of the trick; play continues until three players finish; no out-of-turn chops (configurable
+  since spec v3); no final-play restrictions; no "cóng". Chops are recorded but carry no points until Phase 6
   decides the settlement policy.
 - **Realtime:** commands are REST (status codes, CSRF origin check, rate limits, idempotency);
   Socket.IO only notifies, never carries private data, and clients refetch their own view.

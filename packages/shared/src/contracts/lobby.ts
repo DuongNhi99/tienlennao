@@ -84,6 +84,15 @@ export const roomDetailSchema = roomSummarySchema.extend({
 });
 export type RoomDetail = z.infer<typeof roomDetailSchema>;
 
+/**
+ * The room the caller is seated in, if any (`GET /rooms/current`): one seat per user, so this
+ * is where an unfinished game continues after a reload, a new device or leaving the table.
+ */
+export const currentRoomSchema = z.object({
+  room: roomSummarySchema.nullable(),
+});
+export type CurrentRoom = z.infer<typeof currentRoomSchema>;
+
 /** Allowed creation options, from the active server-side rule preset. */
 export const roomOptionsSchema = z.object({
   entryFees: z.array(coinsSchema.nonnegative()).min(1),

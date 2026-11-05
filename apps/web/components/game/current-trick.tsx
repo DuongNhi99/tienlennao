@@ -4,12 +4,14 @@ import { PlayingCard } from './playing-card';
 
 interface CurrentTrickProps {
   trick: TrickPlay | null;
+  /** The combination by name, e.g. "đôi K". */
+  description?: string | null;
   playerName: (seatIndex: number) => string;
   leaderName: string | null;
 }
 
 /** The combination on the table, or a "new round" prompt when a trick has just been won. */
-export function CurrentTrick({ trick, playerName, leaderName }: CurrentTrickProps) {
+export function CurrentTrick({ trick, description, playerName, leaderName }: CurrentTrickProps) {
   return (
     <section
       aria-label="Bài trên bàn"
@@ -30,7 +32,7 @@ export function CurrentTrick({ trick, playerName, leaderName }: CurrentTrickProp
           </div>
           <p className="text-sm text-white/80">
             <span className="font-semibold text-white">{playerName(trick.seatIndex)}</span> vừa đánh{' '}
-            {trick.cards.length} lá
+            {description ?? `${trick.cards.length} lá`}
           </p>
         </>
       ) : (

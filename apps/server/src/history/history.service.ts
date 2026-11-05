@@ -1,8 +1,9 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import {
-  type CombinationType,
+  calculateMatchResult,
   type CreateReportRequest,
+  gameRulesSchema,
   type Leaderboard,
   type LeaderboardMetric,
   type LeaderboardPeriod,
@@ -11,8 +12,10 @@ import {
   type MatchHistoryPage,
   type RankedRow,
   rankLeaderboard,
+  restoreMatchState,
   type TimelineEvent,
-  TIMELINE_EVENT_TYPES,
+  toChopResults,
+  toTimelineEvent,
   weekStart,
   WIN_RATE_MIN_MATCHES,
 } from '@tienlen/shared';
@@ -34,15 +37,6 @@ const historyInclude = {
 type HistoryMatch = Prisma.MatchGetPayload<{ include: typeof historyInclude }>;
 
 const COMPLETED = ['FINISHED', 'ABORTED'] as const;
-const PUBLIC_EVENTS: ReadonlySet<string> = new Set(TIMELINE_EVENT_TYPES);
-
-interface EventPayload {
-  seat?: number;
-  winnerSeat?: number;
-  place?: number;
-  choppedSeat?: number | null;
-  combination?: { type: CombinationType; cards: TimelineEvent['cards'] };
-}
 
 /**
  * Match history, leaderboards and player reports (README, "History, leaderboard and
@@ -87,23 +81,39 @@ export class HistoryService {
       },
     });
     if (!match) throw new AppException('NOT_FOUND', HttpStatus.NOT_FOUND);
+    const rules = gameRulesSchema.safeParse(match.ruleSnapshot);
     return {
       ...this.toItem(match, userId),
-      timeline: match.events
-        .filter((event) => PUBLIC_EVENTS.has(event.type))
-        .map((event) => {
-          const payload = (event.payload ?? {}) as EventPayload;
-          return {
-            sequence: event.sequence,
-            type: event.type as TimelineEvent['type'],
-            at: event.createdAt.toISOString(),
-            seatIndex: payload.seat ?? payload.winnerSeat ?? null,
-            cards: payload.combination?.cards ?? null,
-            combinationType: payload.combination?.type ?? null,
-            choppedSeat: payload.choppedSeat ?? null,
-            place: payload.place ?? null,
-          };
-        }),
+      timeline: match.events.map(toTimelineEvent).filter((e): e is TimelineEvent => e !== null),
+      rules: rules.success ? rules.data : null,
+      ...this.outcome(match.status, match.stateSnapshot),
+    };
+  }
+
+  /**
+   * Leftover hands, penalties and chops of a finished match, from its final state. Aborted
+   * matches have no result; an unreadable snapshot leaves them out rather than failing.
+   */
+  private outcome(
+    status: string,
+    stateSnapshot: Prisma.JsonValue,
+  ): Pick<MatchHistoryDetail, 'leftovers' | 'chops'> {
+    const snapshot = stateSnapshot as { engine?: unknown } | null;
+    const restored = restoreMatchState(snapshot?.engine);
+    if (status !== 'FINISHED' || !restored.ok || restored.state.status !== 'FINISHED') {
+      return { leftovers: [], chops: [] };
+    }
+    const result = calculateMatchResult(restored.state);
+    return {
+      leftovers: result.placements
+        .map((p) => ({
+          seatIndex: p.seat,
+          remainingCards: p.remainingCards,
+          penalties: p.penalties,
+          penaltyPoints: p.penaltyPoints,
+        }))
+        .sort((a, b) => a.seatIndex - b.seatIndex),
+      chops: toChopResults(result.chops),
     };
   }
 

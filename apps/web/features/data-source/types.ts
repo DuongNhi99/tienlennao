@@ -2,6 +2,7 @@ import type {
   CardId,
   CreateReportRequest,
   CreateRoomRequest,
+  CurrentRoom,
   CurrentUserSummary,
   DailyRewardStatus,
   JoinRoomByCodeRequest,
@@ -59,6 +60,8 @@ export interface GameDataSource {
   createRoom(input: CreateRoomRequest): Promise<{ roomId: string }>;
   joinRoom(roomId: string, password?: string): Promise<{ roomId: string }>;
   joinRoomByCode(input: JoinRoomByCodeRequest): Promise<{ roomId: string }>;
+  /** The room the player is seated in: the unfinished game to continue, if any. */
+  getCurrentRoom(): Promise<CurrentRoom>;
   getRoom(roomId: string): Promise<RoomDetail>;
   setReady(roomId: string, ready: boolean): Promise<RoomDetail>;
   updateRoomSettings(

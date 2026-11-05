@@ -25,8 +25,10 @@ import {
   type PlayCardsRequest,
   type PlayerGameView,
   playerGameViewSchema,
+  restoreMatchState,
   ROOM_TRANSITIONS,
   startMatch,
+  toChopResults,
 } from '@tienlen/shared';
 import { AppException } from '../common/errors/app.exception';
 import { describeError } from '../common/errors/describe-error';
@@ -52,10 +54,17 @@ interface MatchSnapshot {
   turnDeadline: string | null;
 }
 
+/**
+ * Reads a stored snapshot back. The engine state is validated and its rules upgraded
+ * (`restoreMatchState`), so a match resumes exactly where it stopped after a restart or a
+ * release, and a damaged snapshot is refused instead of played on.
+ */
 function readSnapshot(value: Prisma.JsonValue | null): MatchSnapshot {
   const snapshot = value as Partial<MatchSnapshot> | null;
   if (snapshot?.v !== 1 || !snapshot.engine) throw new Error('Unreadable match snapshot');
-  return snapshot as MatchSnapshot;
+  const restored = restoreMatchState(snapshot.engine);
+  if (!restored.ok) throw new Error(`Unreadable match snapshot: ${restored.reason}`);
+  return { v: 1, engine: restored.state, turnDeadline: snapshot.turnDeadline ?? null };
 }
 
 const viewInclude = {
@@ -128,8 +137,13 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
         select: { id: true, stateVersion: true, stateSnapshot: true },
       });
       for (const match of playing) {
-        const { turnDeadline } = readSnapshot(match.stateSnapshot);
-        if (turnDeadline) this.schedule(match.id, match.stateVersion, new Date(turnDeadline));
+        // One unreadable snapshot must not keep the other matches' timers from resuming.
+        try {
+          const { turnDeadline } = readSnapshot(match.stateSnapshot);
+          if (turnDeadline) this.schedule(match.id, match.stateVersion, new Date(turnDeadline));
+        } catch (error) {
+          this.logger.error(`Match ${match.id}: ${describeError(error)}`);
+        }
       }
       if (playing.length) this.logger.log(`Resumed turn timers for ${playing.length} match(es)`);
     } catch (error) {
@@ -175,7 +189,11 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       const rules = await this.presets.rulesFor(room.ruleConfigId);
       // 2–4 players, numbered 0…n-1 in room-seat order for the match.
       const hands = this.dealer.deal(room.players.length);
-      const { state, events } = startMatch(hands, rules);
+      const previousWinnerSeat =
+        rules.starter === 'PREVIOUS_WINNER'
+          ? await this.previousWinnerSeat(tx, roomId, room.players)
+          : null;
+      const { state, events } = startMatch(hands, rules, { previousWinnerSeat });
       const now = new Date();
       const deadline =
         state.status === 'PLAYING' ? new Date(now.getTime() + room.turnTimerSeconds * 1000) : null;
@@ -367,6 +385,10 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       turnSeat: finished ? null : engine.turnSeat,
       turnDeadline: finished ? null : turnDeadline,
       canPass: !finished && canPass(engine, me.seatIndex),
+      rules: engine.rules,
+      // Before the first play the opener holds the turn and the opening card; nobody else is
+      // told which card that is (with 2–3 players it is not always 3♠).
+      openingCard: !finished && engine.turnSeat === me.seatIndex ? engine.openingCard : null,
     });
   }
 
@@ -383,6 +405,8 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
       throw new AppException('FORBIDDEN', HttpStatus.FORBIDDEN);
     }
     const { engine } = readSnapshot(match.stateSnapshot);
+    const outcome = calculateMatchResult(engine);
+    const scored = new Map(outcome.placements.map((p) => [p.seat, p]));
     return {
       matchId: match.id,
       placements: match.players.map((p) => ({
@@ -392,11 +416,35 @@ export class GameService implements OnApplicationBootstrap, OnModuleDestroy {
         cardsRemaining: p.cardsRemaining ?? 0,
         remainingCards: engine.hands[p.seatIndex]!,
         coinDelta: p.coinDelta ?? 0,
+        penalties: scored.get(p.seatIndex)?.penalties ?? [],
+        penaltyPoints: scored.get(p.seatIndex)?.penaltyPoints ?? 0,
       })),
+      reason: outcome.reason,
+      instantWinKind: outcome.instantWin?.kind ?? null,
+      chops: toChopResults(outcome.chops),
     };
   }
 
   // ─── Internals ────────────────────────────────────────────────────────────
+
+  /**
+   * Under `starter: 'PREVIOUS_WINNER'`: the seat, in the match about to start, of whoever won
+   * the match in the room this one is the rematch of — or null when there was none or that
+   * player did not come along (the lowest card then opens).
+   */
+  private async previousWinnerSeat(
+    tx: Prisma.TransactionClient,
+    roomId: string,
+    players: readonly { userId: string }[],
+  ): Promise<number | null> {
+    const winner = await tx.matchPlayer.findFirst({
+      where: { placement: 1, match: { status: 'FINISHED', room: { rematchRoomId: roomId } } },
+      orderBy: { match: { finishedAt: 'desc' } },
+      select: { userId: true },
+    });
+    const seat = winner ? players.findIndex((p) => p.userId === winner.userId) : -1;
+    return seat === -1 ? null : seat;
+  }
 
   private async latestMatchId(roomId: string): Promise<string> {
     const match = await this.prisma.match.findFirst({

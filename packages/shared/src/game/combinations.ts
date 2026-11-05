@@ -88,30 +88,38 @@ export function isSameShape(a: Combination, b: Combination): boolean {
   return a.type === b.type && a.cards.length === b.cards.length;
 }
 
+/** Four of a kind and runs of consecutive pairs: the combinations with chopping powers. */
+export const isBomb = (c: Combination): boolean =>
+  c.type === 'FOUR_OF_A_KIND' || c.type === 'CONSECUTIVE_PAIRS';
+
 /** Bomb powers from docs/GAME_RULES.md §5. */
 function bombBeats(play: Combination, target: Combination, rules: GameRules): boolean {
   const singleTwo = target.type === 'SINGLE' && isTwo(target.top);
   const pairOfTwos = target.type === 'PAIR' && isTwo(target.top);
+  const targetPairs = target.type === 'CONSECUTIVE_PAIRS' ? pairCount(target) : 0;
   const { bombs } = rules;
 
   if (play.type === 'FOUR_OF_A_KIND') {
     return (
       bombs.fourOfAKind &&
-      (singleTwo ||
-        pairOfTwos ||
-        (target.type === 'CONSECUTIVE_PAIRS' && pairCount(target) === MIN_CONSECUTIVE_PAIRS))
+      (singleTwo || pairOfTwos || (bombs.bombsBeatBombs && targetPairs === MIN_CONSECUTIVE_PAIRS))
     );
   }
   if (play.type !== 'CONSECUTIVE_PAIRS') return false;
 
-  // Longer runs keep the three-pair power even when the four-pair power is disabled.
-  if (singleTwo && bombs.threeConsecutivePairs) return true;
+  // Longer runs keep the three-pair powers even when the four-pair power is disabled.
+  if (
+    bombs.threeConsecutivePairs &&
+    (singleTwo || (pairOfTwos && bombs.threeConsecutivePairsBeatPairOfTwos))
+  ) {
+    return true;
+  }
   if (pairCount(play) === MIN_CONSECUTIVE_PAIRS || !bombs.fourConsecutivePairs) return false;
   return (
     singleTwo ||
     pairOfTwos ||
-    target.type === 'FOUR_OF_A_KIND' ||
-    (target.type === 'CONSECUTIVE_PAIRS' && pairCount(target) < pairCount(play))
+    (bombs.bombsBeatBombs &&
+      (target.type === 'FOUR_OF_A_KIND' || (targetPairs > 0 && targetPairs < pairCount(play))))
   );
 }
 
@@ -125,6 +133,15 @@ export function canBeatCombination(
     return cardStrength(play.top, rules.suitOrder) > cardStrength(target.top, rules.suitOrder);
   }
   return bombBeats(play, target, rules);
+}
+
+/**
+ * True when `play` beats `target` through a bomb power rather than by being a higher one of the
+ * same shape: a chop (chặt), recorded in the match and, under `bombs.outOfTurn`, playable out
+ * of turn.
+ */
+export function isChop(play: Combination, target: Combination, rules: GameRules): boolean {
+  return !isSameShape(play, target) && bombBeats(play, target, rules);
 }
 
 function subsets<T>(items: readonly T[], size: number): T[][] {

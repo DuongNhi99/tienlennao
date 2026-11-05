@@ -1,17 +1,34 @@
 /**
  * DEVELOPMENT-ONLY in-memory backend used by UI preview mode (see ./flag.ts).
  *
- * It mimics the server's authorization and state checks (membership, turn order, card
- * ownership, idempotency, stale versions) so the UI's error handling can be exercised, and every
- * response is validated against the shared contracts. It does NOT implement the Tiến Lên rules:
- * combinations are not validated (Phase 4), bots only play single cards, and the match ends when
- * the first player empties their hand. Shuffling uses Math.random — acceptable only here.
+ * It mimics the server's authorization and state checks (membership, idempotency, stale
+ * versions) and runs matches on the real rules engine (@tienlen/shared), so plays are judged
+ * exactly as on the server and results carry real penalties, chops and timelines. Bots choose
+ * among the engine's legal plays (`chooseBotMove`). Every response is validated against the
+ * shared contracts. Shuffling uses Math.random — acceptable only here.
  */
 import {
+  type ActionResult,
   ALL_CARD_IDS,
+  applyPass,
+  applyPlay,
+  applyTimeout,
+  calculateMatchResult,
+  calculatePayouts,
+  canPass,
   type CardId,
+  chooseBotMove,
+  DEFAULT_GAME_RULES,
+  detectInstantWin,
+  GAME_VIOLATION_ERROR_CODES,
+  type MatchState,
+  startMatch,
+  type TimelineEvent,
+  toChopResults,
+  toTimelineEvent,
   type CreateRoomRequest,
   createRoomRequestSchema,
+  currentRoomSchema,
   currentUserSummarySchema,
   dailyRewardStatusSchema,
   ERROR_MESSAGES_VI,
@@ -39,9 +56,7 @@ import {
   type RoomStatus,
   type RoomSummary,
   roomSummarySchema,
-  sortCards,
-  compareCards,
-  type TrickPlay,
+  scoreLeftoverHand,
   type LeaderboardQuery,
   leaderboardSchema,
   type MatchHistoryDetail,
@@ -62,6 +77,8 @@ const LATENCY_MS = 200;
 const BOT_DELAY_MS = 900;
 const AUTO_START_DELAY_MS = 1200;
 const MATCHMAKING_DELAY_MS = 2500;
+/** The standard rules; instant wins are re-dealt (see `startGame`). */
+const PREVIEW_RULES = DEFAULT_GAME_RULES;
 const OPTIONS: RoomOptions = { entryFees: [0, 100, 500, 1000, 5000], turnTimers: [15, 30, 45] };
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
@@ -100,15 +117,10 @@ interface MockRoom {
 interface MockGame {
   matchId: string;
   roomId: string;
-  status: 'PLAYING' | 'FINISHED';
-  stateVersion: number;
   players: PublicPlayer[];
-  hands: CardId[][];
-  currentTrick: TrickPlay | null;
-  lastPlaySeat: number | null;
-  passed: boolean[];
-  finishedPlace: (number | null)[];
-  turnSeat: number;
+  /** The authoritative engine state, as the server stores it. */
+  state: MatchState;
+  timeline: TimelineEvent[];
   turnDeadline: number;
   processedActions: Set<string>;
   startedAt: number;
@@ -274,8 +286,10 @@ export function createPreviewDataSource(): GameDataSource {
     });
   }
   const [hl, ht, hb] = BOTS as [PublicPlayer, PublicPlayer, PublicPlayer];
+  // Quốc Bảo finished last holding two 2s: thúi heo, scored by the engine.
+  const lastHand: CardId[] = ['4H', '9C', '9D', '2S', '2D'];
   const history: MatchHistoryDetail[] = [
-    {
+    matchHistoryDetailSchema.parse({
       matchId: uuid(0xd00),
       roomId: uuid(0xa00),
       roomCode: 'K7M2QX',
@@ -312,7 +326,14 @@ export function createPreviewDataSource(): GameDataSource {
         choppedSeat: null,
         place,
       })),
-    },
+      rules: PREVIEW_RULES,
+      leftovers: [0, 1, 2, 3].map((seatIndex) => {
+        const remainingCards = seatIndex === 3 ? lastHand : [];
+        const penalties = scoreLeftoverHand(remainingCards, PREVIEW_RULES);
+        const penaltyPoints = penalties.reduce((sum, item) => sum + item.points, 0);
+        return { seatIndex, remainingCards, penalties, penaltyPoints };
+      }),
+    }),
   ];
   const leaderboardRows = (
     [
@@ -471,27 +492,29 @@ export function createPreviewDataSource(): GameDataSource {
 
   function startGame(room: MockRoom) {
     const players = room.seats.map((s) => s!.player);
-    const deck = shuffled(ALL_CARD_IDS);
-    const hands = players.map((_, i) => deck.slice(i * 13, i * 13 + 13));
+    // Instant wins are re-dealt so the practice table always plays, and you get the hand
+    // with 3♠: the demo (and its browser tests) opens with your move.
+    let hands: CardId[][];
+    do {
+      const deck = shuffled(ALL_CARD_IDS);
+      hands = players.map((_, i) => deck.slice(i * 13, i * 13 + 13));
+    } while (hands.some((hand) => detectInstantWin(hand, PREVIEW_RULES.instantWins)));
+    const me = players.findIndex((p) => p.userId === ME.userId);
+    const opener = hands.findIndex((hand) => hand.includes('3S'));
+    if (me !== -1 && opener !== -1) [hands[me], hands[opener]] = [hands[opener]!, hands[me]!];
+
     const game: MockGame = {
       matchId: crypto.randomUUID(),
       roomId: room.id,
-      status: 'PLAYING',
-      stateVersion: 1,
       players,
-      hands,
-      currentTrick: null,
-      lastPlaySeat: null,
-      passed: [false, false, false, false],
-      finishedPlace: [null, null, null, null],
-      // The holder of 3♠ leads the first trick.
-      turnSeat: hands.findIndex((hand) => hand.includes('3S')),
+      state: startMatch(hands, PREVIEW_RULES).state,
+      timeline: [],
       turnDeadline: 0,
       processedActions: new Set(),
       startedAt: Date.now(),
       result: null,
     };
-    if (players.some((p) => p.userId === ME.userId)) {
+    if (me !== -1) {
       record('MATCH_ENTRY', -room.entryFee, game.matchId);
       emit({ type: 'user' });
     }
@@ -503,108 +526,76 @@ export function createPreviewDataSource(): GameDataSource {
 
   const mySeatInGame = (game: MockGame) => game.players.findIndex((p) => p.userId === ME.userId);
 
+  /** Applies an engine result, as the server does: reject, or store the state and its events. */
+  function commit(game: MockGame, result: ActionResult) {
+    if (!result.ok) {
+      const code = GAME_VIOLATION_ERROR_CODES[result.violation];
+      const status = code.startsWith('INVALID_') ? 400 : code === 'FORBIDDEN' ? 403 : 409;
+      throw new ApiError(code, status);
+    }
+    game.state = result.state;
+    for (const { type, ...payload } of result.events) {
+      const sequence = game.timeline.length + 1;
+      const event = toTimelineEvent({ sequence, type, createdAt: new Date(), payload });
+      if (event) game.timeline.push(event);
+    }
+    if (game.state.status === 'FINISHED') finishGame(game);
+    else beginTurn(game);
+    emit({ type: 'game', roomId: game.roomId });
+  }
+
   function beginTurn(game: MockGame) {
     const room = rooms.get(game.roomId)!;
     game.turnDeadline = Date.now() + room.turnTimerSeconds * 1000;
     const key = `turn:${game.matchId}`;
-    const version = game.stateVersion;
-    if (game.players[game.turnSeat]!.userId === ME.userId) {
-      // Timeout policy (preview): auto-pass, or auto-play the lowest card when leading.
+    const { version, turnSeat } = game.state;
+    const seat = turnSeat!;
+    const stillCurrent = () => game.state.version === version && game.state.status === 'PLAYING';
+    if (game.players[seat]!.userId === ME.userId) {
+      // The engine's timeout action: pass, or lead the weakest card.
       schedule(key, room.turnTimerSeconds * 1000, () => {
-        if (game.stateVersion !== version || game.status !== 'PLAYING') return;
-        if (game.currentTrick) applyPass(game, game.turnSeat);
-        else applyPlay(game, game.turnSeat, [sortCards(game.hands[game.turnSeat]!)[0]!]);
+        if (stillCurrent()) commit(game, applyTimeout(game.state, seat));
       });
     } else {
+      // Bots choose among the engine's legal plays (chooseBotMove).
       schedule(key, BOT_DELAY_MS, () => {
-        if (game.stateVersion !== version || game.status !== 'PLAYING') return;
-        botMove(game);
+        if (!stillCurrent()) return;
+        const move = chooseBotMove(game.state, seat);
+        commit(
+          game,
+          move?.type === 'PLAY'
+            ? applyPlay(game.state, seat, move.cards)
+            : move?.type === 'PASS'
+              ? applyPass(game.state, seat)
+              : applyTimeout(game.state, seat),
+        );
       });
     }
   }
 
-  function botMove(game: MockGame) {
-    const seatIndex = game.turnSeat;
-    const hand = sortCards(game.hands[seatIndex]!);
-    const trick = game.currentTrick;
-    if (!trick) {
-      applyPlay(game, seatIndex, [hand[0]!]);
-      return;
-    }
-    const target = trick.cards.length === 1 ? trick.cards[0]! : null;
-    const beating = target ? hand.find((card) => compareCards(card, target) > 0) : undefined;
-    if (beating) applyPlay(game, seatIndex, [beating]);
-    else applyPass(game, seatIndex);
-  }
-
-  function applyPlay(game: MockGame, seatIndex: number, cards: CardId[]) {
-    game.hands[seatIndex] = game.hands[seatIndex]!.filter((card) => !cards.includes(card));
-    game.currentTrick = { seatIndex, cards };
-    game.lastPlaySeat = seatIndex;
-    game.passed = [false, false, false, false];
-    if (game.hands[seatIndex]!.length === 0) {
-      finishGame(game, seatIndex);
-      return;
-    }
-    advanceTurn(game);
-  }
-
-  function applyPass(game: MockGame, seatIndex: number) {
-    game.passed[seatIndex] = true;
-    advanceTurn(game);
-  }
-
-  function advanceTurn(game: MockGame) {
-    const contenders = [0, 1, 2, 3].filter(
-      (s) => game.finishedPlace[s] === null && !game.passed[s] && s !== game.lastPlaySeat,
-    );
-    if (contenders.length === 0 && game.lastPlaySeat !== null) {
-      // Everyone else passed: the last player wins the trick and leads the next one.
-      game.currentTrick = null;
-      game.passed = [false, false, false, false];
-      game.turnSeat = game.lastPlaySeat;
-    } else {
-      for (let i = 1; i <= PLAYERS_PER_MATCH; i++) {
-        const next = (game.turnSeat + i) % PLAYERS_PER_MATCH;
-        if (contenders.includes(next)) {
-          game.turnSeat = next;
-          break;
-        }
-      }
-    }
-    game.stateVersion++;
-    beginTurn(game);
-    emit({ type: 'game', roomId: game.roomId });
-  }
-
-  function finishGame(game: MockGame, winnerSeat: number) {
+  function finishGame(game: MockGame) {
     clearTimeout(timers.get(`turn:${game.matchId}`));
     const room = rooms.get(game.roomId)!;
-    const order = [0, 1, 2, 3].sort((a, b) =>
-      a === winnerSeat
-        ? -1
-        : b === winnerSeat
-          ? 1
-          : game.hands[a]!.length - game.hands[b]!.length || a - b,
-    );
-    // Preview payout table (the real table is defined in Phase 6): 50/30/20/0 % of the pool.
-    const pool = room.entryFee * PLAYERS_PER_MATCH;
-    const shares = [0.5, 0.3, 0.2, 0];
-    const placements = order.map((seatIndex, i) => {
-      const payout = Math.floor(pool * shares[i]!);
-      return {
-        ...game.players[seatIndex]!,
-        seatIndex,
-        placement: i + 1,
-        cardsRemaining: game.hands[seatIndex]!.length,
-        remainingCards: game.hands[seatIndex]!,
-        coinDelta: payout - room.entryFee,
-      };
+    const outcome = calculateMatchResult(game.state);
+    const payouts = calculatePayouts(room.entryFee, game.players.length);
+    const placements = outcome.placements.map((p) => ({
+      ...game.players[p.seat]!,
+      seatIndex: p.seat,
+      placement: p.placement,
+      cardsRemaining: p.remainingCards.length,
+      remainingCards: p.remainingCards,
+      coinDelta: payouts[p.placement - 1]! - room.entryFee,
+      penalties: p.penalties,
+      penaltyPoints: p.penaltyPoints,
+    }));
+    const chops = toChopResults(outcome.chops);
+    game.result = matchResultSchema.parse({
+      matchId: game.matchId,
+      placements,
+      reason: outcome.reason,
+      instantWinKind: outcome.instantWin?.kind ?? null,
+      chops,
     });
-    order.forEach((seatIndex, i) => (game.finishedPlace[seatIndex] = i + 1));
-    game.status = 'FINISHED';
-    game.stateVersion++;
-    game.result = matchResultSchema.parse({ matchId: game.matchId, placements });
     if (mySeatInGame(game) !== -1) {
       history.unshift({
         matchId: game.matchId,
@@ -617,17 +608,28 @@ export function createPreviewDataSource(): GameDataSource {
         finishedAt: new Date().toISOString(),
         durationSeconds: Math.round((Date.now() - game.startedAt) / 1000),
         mySeat: mySeatInGame(game),
-        // History keeps only the leftover count, as the real server does.
-        players: placements.map(
-          ({ placement, cardsRemaining, remainingCards: _, coinDelta, ...player }) => ({
-            ...player,
+        players: placements
+          .map(({ seatIndex, placement, cardsRemaining, coinDelta, ...p }) => ({
+            userId: p.userId,
+            displayName: p.displayName,
+            avatarUrl: p.avatarUrl,
+            seatIndex,
             placement,
             cardsRemaining,
             coinDelta,
-          }),
-        ),
-        // The preview does not record moves; the real server keeps the full public timeline.
-        timeline: [],
+          }))
+          .sort((a, b) => a.seatIndex - b.seatIndex),
+        timeline: game.timeline,
+        rules: game.state.rules,
+        leftovers: placements
+          .map(({ seatIndex, remainingCards, penalties, penaltyPoints }) => ({
+            seatIndex,
+            remainingCards,
+            penalties,
+            penaltyPoints,
+          }))
+          .sort((a, b) => a.seatIndex - b.seatIndex),
+        chops,
       });
     }
     room.status = 'FINISHED';
@@ -639,7 +641,6 @@ export function createPreviewDataSource(): GameDataSource {
       if (mine.placement === 1) user.matchesWon++;
       emit({ type: 'user' });
     }
-    emit({ type: 'game', roomId: game.roomId });
     emit({ type: 'room', roomId: game.roomId });
     emit({ type: 'rooms' });
   }
@@ -654,36 +655,48 @@ export function createPreviewDataSource(): GameDataSource {
   function toView(game: MockGame): PlayerGameView {
     const mySeat = mySeatInGame(game);
     const room = rooms.get(game.roomId)!;
+    const { state } = game;
+    const finished = state.status === 'FINISHED';
+    const place = (seatIndex: number) => {
+      if (game.result)
+        return game.result.placements.find((p) => p.seatIndex === seatIndex)!.placement;
+      const index = state.finishOrder.indexOf(seatIndex);
+      return index === -1 ? null : index + 1;
+    };
     return playerGameViewSchema.parse({
       matchId: game.matchId,
       roomId: game.roomId,
-      status: game.status,
-      stateVersion: game.stateVersion,
+      status: state.status,
+      stateVersion: state.version,
       entryFee: room.entryFee,
       mySeat,
       // Only this player's own cards are ever included.
-      myHand: game.hands[mySeat],
+      myHand: state.hands[mySeat],
       seats: game.players.map((player, seatIndex) => ({
         ...player,
         seatIndex,
-        cardCount: game.hands[seatIndex]!.length,
-        hasPassed: game.passed[seatIndex],
-        finishedPlace: game.finishedPlace[seatIndex],
+        cardCount: state.hands[seatIndex]!.length,
+        hasPassed: state.passed[seatIndex],
+        finishedPlace: place(seatIndex),
         connected: true,
-        revealedCards: game.status === 'FINISHED' ? game.hands[seatIndex] : null,
+        revealedCards: finished ? state.hands[seatIndex] : null,
       })),
-      currentTrick: game.currentTrick,
-      turnSeat: game.status === 'PLAYING' ? game.turnSeat : null,
-      turnDeadline: game.status === 'PLAYING' ? new Date(game.turnDeadline).toISOString() : null,
-      canPass: game.status === 'PLAYING' && game.turnSeat === mySeat && game.currentTrick !== null,
+      currentTrick: state.table
+        ? { seatIndex: state.table.seat, cards: state.table.combination.cards }
+        : null,
+      turnSeat: finished ? null : state.turnSeat,
+      turnDeadline: finished ? null : new Date(game.turnDeadline).toISOString(),
+      canPass: !finished && canPass(state, mySeat),
+      rules: state.rules,
+      openingCard: !finished && state.turnSeat === mySeat ? state.openingCard : null,
     });
   }
 
+  /** Idempotency and versions, as on the server; turn order and legality are the engine's. */
   function checkAction(game: MockGame, action: GameAction): 'duplicate' | 'ok' {
     if (game.processedActions.has(action.actionId)) return 'duplicate';
-    if (game.status !== 'PLAYING') throw new ApiError('MATCH_FINISHED', 409);
-    if (action.stateVersion !== game.stateVersion) throw new ApiError('STALE_STATE', 409);
-    if (game.turnSeat !== mySeatInGame(game)) throw new ApiError('NOT_YOUR_TURN', 409);
+    if (game.state.status !== 'PLAYING') throw new ApiError('MATCH_FINISHED', 409);
+    if (action.stateVersion !== game.state.version) throw new ApiError('STALE_STATE', 409);
     return 'ok';
   }
 
@@ -765,6 +778,12 @@ export function createPreviewDataSource(): GameDataSource {
       const room = [...rooms.values()].find((r) => r.code === input.code && isOpen(r));
       if (!room) throw new ApiError('ROOM_NOT_FOUND', 404);
       return join(room, input.password);
+    },
+
+    async getCurrentRoom() {
+      await delay(LATENCY_MS / 2);
+      const room = currentRoom();
+      return currentRoomSchema.parse({ room: room ? toSummary(room) : null });
     },
 
     async getRoom(roomId) {
@@ -884,17 +903,8 @@ export function createPreviewDataSource(): GameDataSource {
       await delay(LATENCY_MS / 2);
       const game = getGameOrThrow(action.roomId);
       if (checkAction(game, action) === 'duplicate') return toView(game);
-      const hand = game.hands[game.turnSeat]!;
-      const unique = new Set(cards);
-      if (
-        cards.length === 0 ||
-        unique.size !== cards.length ||
-        cards.some((c) => !hand.includes(c))
-      ) {
-        throw new ApiError('INVALID_CARD_SELECTION', 400);
-      }
+      commit(game, applyPlay(game.state, mySeatInGame(game), cards));
       game.processedActions.add(action.actionId);
-      applyPlay(game, game.turnSeat, cards);
       return toView(game);
     },
 
@@ -902,9 +912,8 @@ export function createPreviewDataSource(): GameDataSource {
       await delay(LATENCY_MS / 2);
       const game = getGameOrThrow(action.roomId);
       if (checkAction(game, action) === 'duplicate') return toView(game);
-      if (game.currentTrick === null) throw new ApiError('PASS_NOT_ALLOWED', 409);
+      commit(game, applyPass(game.state, mySeatInGame(game)));
       game.processedActions.add(action.actionId);
-      applyPass(game, game.turnSeat);
       return toView(game);
     },
 

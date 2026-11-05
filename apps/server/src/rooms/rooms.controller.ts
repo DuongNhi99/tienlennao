@@ -13,6 +13,7 @@ import {
 import {
   type CreateRoomRequest,
   createRoomRequestSchema,
+  type CurrentRoom,
   type JoinRoomByCodeRequest,
   joinRoomByCodeRequestSchema,
   type JoinRoomRequest,
@@ -58,6 +59,12 @@ export class RoomsController {
   @Get('options')
   options(): Promise<RoomOptions> {
     return this.rooms.options();
+  }
+
+  /** The room the caller is seated in: the unfinished game to continue, if any. */
+  @Get('current')
+  current(@CurrentUser() user: SessionUser): Promise<CurrentRoom> {
+    return this.rooms.current(user.id);
   }
 
   @Post()

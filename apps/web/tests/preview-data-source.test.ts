@@ -156,6 +156,36 @@ describe('preview data source — game', () => {
       );
     }
   });
+
+  it('judges plays with the rules engine and lets bots play legal moves to the end', async () => {
+    await startPracticeMatch();
+    const view = await waitForMyTurn();
+    expect(view).toMatchObject({ openingCard: '3S', rules: { specVersion: 3 } });
+    const base = { roomId: PRACTICE_ROOM, stateVersion: view.stateVersion };
+    // The first play must contain 3♠.
+    const other = view.myHand.find((card) => card !== '3S')!;
+    await expectCode(
+      source.playCards({ ...base, actionId: 'r1', cards: [other] }),
+      'INVALID_COMBINATION',
+    );
+    await expectCode(source.pass({ ...base, actionId: 'r2' }), 'PASS_NOT_ALLOWED');
+
+    // From here on, the turn timer plays for us; bots answer with legal moves until the end.
+    await call(source.playCards({ ...base, actionId: 'r3', cards: ['3S'] }));
+    for (let i = 0; i < 400; i++) {
+      const now = await call(source.getGameView(PRACTICE_ROOM));
+      if (now.status === 'FINISHED') break;
+      await vi.advanceTimersByTimeAsync(31_000);
+    }
+    const result = await call(source.getMatchResult(PRACTICE_ROOM));
+    expect(result.placements.map((p) => p.placement)).toEqual([1, 2, 3, 4]);
+    for (const p of result.placements) {
+      expect(p.penaltyPoints).toBe(p.penalties.reduce((sum, item) => sum + item.points, 0));
+    }
+    const history = await call(source.getMatchHistory(result.matchId));
+    expect(history.timeline.at(-1)?.type).toBe('MATCH_FINISHED');
+    expect(history.leftovers).toHaveLength(4);
+  });
 });
 
 describe('preview data source — rewards', () => {

@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import {
+  ALL_CARD_IDS,
   apiErrorSchema,
   type CardId,
+  currentRoomSchema,
   DEFAULT_GAME_RULES,
   detectInstantWin,
+  type GameRules,
   type MatchState,
   matchResultSchema,
   matchmakingStatusSchema,
@@ -105,6 +108,50 @@ function connect(player: Player | null, origin?: string): Promise<Socket> {
   });
 }
 
+/** The caller's seated room (`GET /rooms/current`), the game they can continue. */
+async function currentRoom(player: Player) {
+  const res = await player.http.get(`${API}/rooms/current`).expect(200);
+  return currentRoomSchema.parse(res.body).room;
+}
+
+/**
+ * Runs `body` with `rules` as the active preset (a new, higher version of `default`), then
+ * retires that version so later tests play by the usual rules again.
+ */
+async function withRules(rules: GameRules, body: () => Promise<void>): Promise<void> {
+  const top = await ctx.prisma.gameRuleConfiguration.aggregate({
+    where: { key: 'default' },
+    _max: { version: true },
+  });
+  const preset = await ctx.prisma.gameRuleConfiguration.create({
+    data: {
+      key: 'default',
+      // Far above the fixed versions other suites upsert (1, 2).
+      version: Math.max(top._max.version ?? 0, 1000) + 1,
+      name: 'Rule variant test',
+      isActive: true,
+      rules,
+      allowedEntryFees: [0],
+      allowedTurnTimers: [30],
+    },
+  });
+  try {
+    await body();
+  } finally {
+    await ctx.prisma.gameRuleConfiguration.update({
+      where: { id: preset.id },
+      data: { isActive: false },
+    });
+  }
+}
+
+/** Four hands starting with the given cards, filled up from the rest of the deck in order. */
+function plannedDeal(fixed: CardId[][]): CardId[][] {
+  const used = new Set(fixed.flat());
+  const rest = ALL_CARD_IDS.filter((card) => !used.has(card));
+  return fixed.map((hand) => [...hand, ...rest.splice(0, 13 - hand.length)]);
+}
+
 async function eventually(check: () => boolean | Promise<boolean>, what: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
     if (await check()) return;
@@ -126,6 +173,16 @@ describe('rooms', () => {
       .send({ visibility: 'PUBLIC', entryFee: 123, turnTimerSeconds: 30, requestId: randomUUID() })
       .expect(400);
     expect(errorCode(res.body)).toBe('VALIDATION_ERROR');
+  });
+
+  it('reports the room a player is seated in, so an unfinished game can be continued', async () => {
+    const [host, other] = await players(2);
+    expect(await currentRoom(host!)).toBeNull();
+    const roomId = await createRoom(host!);
+    expect(await currentRoom(host!)).toMatchObject({ id: roomId, status: 'WAITING' });
+    expect(await currentRoom(other!)).toBeNull();
+    await host!.http.post(`${API}/rooms/${roomId}/leave`).expect(204);
+    expect(await currentRoom(host!)).toBeNull();
   });
 
   it('creates a room once per request ID and lists it publicly', async () => {
@@ -363,8 +420,17 @@ describe('a complete match between four independent clients', () => {
       expect(new Set(dealt).size).toBe(52);
       for (const v of views) {
         expect(v.myHand).toHaveLength(13);
-        expect(JSON.stringify(v).match(CARD_PATTERN)).toHaveLength(13);
+        // Every card named anywhere in the view is one of the player's own.
+        const named = new Set(JSON.stringify(v).match(CARD_PATTERN));
+        expect(named).toEqual(new Set(v.myHand.map((card) => `"${card}"`)));
         expect(v.seats.every((s) => s.cardCount === 13)).toBe(true);
+        // Only the opener is told which card the first play must contain: they hold it.
+        expect(v.openingCard).toBe(v.turnSeat === v.mySeat ? '3S' : null);
+        expect(v.rules).toMatchObject({ specVersion: 3 });
+      }
+      // Each player can find the running match again (a reload, another device).
+      for (const p of table) {
+        expect(await currentRoom(p)).toMatchObject({ id: roomId, status: 'IN_PROGRESS' });
       }
 
       // Rejections, checked on the opening position.
@@ -458,6 +524,18 @@ describe('a complete match between four independent clients', () => {
         expect(p.remainingCards).toHaveLength(p.cardsRemaining);
       }
       expect(result.placements[3]!.remainingCards.length).toBeGreaterThan(0);
+      // Leftover penalties (thúi heo …) and chops come from the final state.
+      const final = await storedState(roomId);
+      expect(result.reason).toBe('NORMAL');
+      expect(result.chops).toHaveLength(final.chops.length);
+      for (const p of result.placements) {
+        expect(p.penaltyPoints).toBe(p.penalties.reduce((sum, item) => sum + item.points, 0));
+        const twos = p.remainingCards.filter((card) => card.startsWith('2'));
+        expect(p.penalties.filter((item) => item.kind.endsWith('_TWO'))).toHaveLength(twos.length);
+        if (p.placement === 1) expect(p.penalties).toEqual([]);
+      }
+      // The match is over: nothing left to continue.
+      for (const p of table) expect(await currentRoom(p)).toBeNull();
       const winner = result.placements[0]!.userId;
       const profiles = await ctx.prisma.userProfile.findMany({
         where: { userId: { in: table.map((p) => p.userId) } },
@@ -582,6 +660,8 @@ describe('instant wins', () => {
       (await table[1]!.http.get(`${API}/rooms/${roomId}/game/result`).expect(200)).body,
     );
     expect(result.placements.map((p) => p.seatIndex)).toEqual([2, 3, 0, 1]);
+    expect(result).toMatchObject({ reason: 'INSTANT_WIN', instantWinKind: 'FOUR_TWOS', chops: [] });
+    expect(result.placements.every((p) => p.penaltyPoints === 0)).toBe(true);
     const game = await view(table[2]!, roomId);
     expect(game).toMatchObject({ status: 'FINISHED', turnSeat: null, canPass: false });
     const events = await ctx.prisma.matchEvent.findMany({
@@ -589,6 +669,78 @@ describe('instant wins', () => {
       orderBy: { sequence: 'asc' },
     });
     expect(events.map((e) => e.type)).toEqual(['DEALT', 'MATCH_FINISHED']);
+  });
+});
+
+describe('rule variants', () => {
+  it(
+    'lets the previous winner lead the rematch (starter: PREVIOUS_WINNER)',
+    { timeout: 120_000 },
+    async () => {
+      await withRules({ ...DEFAULT_GAME_RULES, starter: 'PREVIOUS_WINNER' }, async () => {
+        const pair = await players(2);
+        const [host, guest] = pair as [Player, Player];
+        const roomId = await createRoom(host);
+        await guest.http.post(`${API}/rooms/${roomId}/join`).send({}).expect(200);
+        for (const p of pair)
+          await p.http.put(`${API}/rooms/${roomId}/ready`).send({ ready: true }).expect(200);
+        await host.http.post(`${API}/rooms/${roomId}/start`).expect(200);
+        // No previous match: the lowest dealt card opens, as usual.
+        if ((await view(host, roomId)).status === 'PLAYING') {
+          const opening = await Promise.all(pair.map((p) => view(p, roomId)));
+          expect(opening.filter((v) => v.openingCard !== null)).toHaveLength(1);
+        }
+        await playToEnd(pair, roomId);
+        const result = matchResultSchema.parse(
+          (await host.http.get(`${API}/rooms/${roomId}/game/result`).expect(200)).body,
+        );
+        const winner = pair.findIndex((p) => p.userId === result.placements[0]!.userId);
+
+        // The guest asks first, so the guest hosts the new room and sits in seat 0.
+        const next = await guest.http.post(`${API}/rooms/${roomId}/rematch`).expect(200);
+        const nextId = (next.body as { roomId: string }).roomId;
+        await host.http.post(`${API}/rooms/${roomId}/rematch`).expect(200);
+        for (const p of pair)
+          await p.http.put(`${API}/rooms/${nextId}/ready`).send({ ready: true }).expect(200);
+        await guest.http.post(`${API}/rooms/${nextId}/start`).expect(200);
+        const views = await Promise.all(pair.map((p) => view(p, nextId)));
+        if (views[0]!.status !== 'PLAYING') return; // an instant win decided the rematch
+        expect(views[winner]!.turnSeat).toBe(views[winner]!.mySeat);
+        expect(views.every((v) => v.openingCard === null)).toBe(true);
+      });
+    },
+  );
+
+  it('accepts a chop out of turn (bombs.outOfTurn), and only a chop', async () => {
+    const rules: GameRules = {
+      ...DEFAULT_GAME_RULES,
+      instantWins: [],
+      bombs: { ...DEFAULT_GAME_RULES.bombs, outOfTurn: true },
+    };
+    await withRules(rules, async () => {
+      const table = await players(4);
+      dealer.planned.push(plannedDeal([['3S'], ['2H'], [], ['7S', '7C', '7D', '7H']]));
+      const roomId = await readyRoom(table);
+      await table[0]!.http.post(`${API}/rooms/${roomId}/start`).expect(200);
+      const play = async (seat: number, cards: CardId[], status = 200) => {
+        const { stateVersion } = await view(table[seat]!, roomId);
+        return table[seat]!.http.post(`${API}/rooms/${roomId}/game/play`)
+          .send({ actionId: randomUUID(), stateVersion, cards })
+          .expect(status);
+      };
+      await play(0, ['3S']);
+      await play(1, ['2H']);
+      // Seat 2's turn. A normal beat out of turn is refused; seat 3's four 7s chop the 2.
+      const refused = await play(0, [(await view(table[0]!, roomId)).myHand.at(-1)!], 409);
+      expect(errorCode(refused.body)).toBe('NOT_YOUR_TURN');
+      const chopped = playerGameViewSchema.parse((await play(3, ['7S', '7C', '7D', '7H'])).body);
+      expect(chopped).toMatchObject({ turnSeat: 0, currentTrick: { seatIndex: 3 } });
+      expect((await storedState(roomId)).chops).toMatchObject([{ seat: 3, choppedSeat: 1 }]);
+      const event = await ctx.prisma.matchEvent.findFirstOrThrow({
+        where: { match: { roomId }, type: 'PLAY', actorUserId: table[3]!.userId },
+      });
+      expect(event.payload).toMatchObject({ outOfTurn: true, choppedSeat: 1 });
+    });
   });
 });
 

@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { PLAYERS_PER_MATCH } from '../constants/game';
 import { cardIdSchema } from '../game/cards';
 import { COMBINATION_TYPES } from '../game/combinations';
+import { gameRulesSchema } from '../game/rules';
+import { chopResultSchema, leftoverPenaltySchema } from './game';
 import { leaderboardEntrySchema, publicPlayerSchema } from './lobby';
 
 const seatIndexSchema = z
@@ -67,11 +69,27 @@ export const timelineEventSchema = z.object({
   choppedSeat: seatIndexSchema.nullable(),
   /** Finishing place, for PLAYER_FINISHED. */
   place: z.number().int().min(1).max(PLAYERS_PER_MATCH).nullable(),
+  /** A chop played out of turn (`bombs.outOfTurn`). */
+  outOfTurn: z.boolean().default(false),
 });
 export type TimelineEvent = z.infer<typeof timelineEventSchema>;
 
+/** What a player still held when a finished match ended, and what it cost them. */
+export const historyLeftoverSchema = z.object({
+  seatIndex: seatIndexSchema,
+  remainingCards: z.array(cardIdSchema),
+  penalties: z.array(leftoverPenaltySchema),
+  penaltyPoints: z.number().int().nonnegative(),
+});
+export type HistoryLeftover = z.infer<typeof historyLeftoverSchema>;
+
 export const matchHistoryDetailSchema = matchHistoryItemSchema.extend({
   timeline: z.array(timelineEventSchema),
+  /** The rules the match was played by (its snapshot). Null when unknown. */
+  rules: gameRulesSchema.nullable().default(null),
+  /** One per player, for finished matches; empty for aborted ones. */
+  leftovers: z.array(historyLeftoverSchema).default([]),
+  chops: z.array(chopResultSchema).default([]),
 });
 export type MatchHistoryDetail = z.infer<typeof matchHistoryDetailSchema>;
 

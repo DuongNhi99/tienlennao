@@ -53,6 +53,8 @@ function EventBridge({ source }: { source: GameDataSource }) {
             break;
           case 'room':
             void queryClient.invalidateQueries({ queryKey: queryKeys.room(event.roomId) });
+            // Seated, left, started or finished: the game to continue may have changed.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.currentRoom });
             break;
           case 'game':
             void queryClient.invalidateQueries({ queryKey: queryKeys.game(event.roomId) });

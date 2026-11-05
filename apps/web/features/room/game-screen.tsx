@@ -6,12 +6,11 @@ import {
   type CardSortMode,
   classifyCombination,
   DEFAULT_GAME_RULES,
-  describeCombination,
   type GameSeat,
   type RoomDetail,
   sortCards,
 } from '@tienlen/shared';
-import { ArrowUpDown, RotateCcw, Trophy, X } from 'lucide-react';
+import { ArrowUpDown, LogOut, RotateCcw, Trophy, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { CardHand } from '@/components/game/card-hand';
@@ -22,12 +21,15 @@ import { MatchResultModal } from '@/components/game/match-result-modal';
 import { PlayerSeat } from '@/components/game/player-seat';
 import { TurnIndicator } from '@/components/game/turn-indicator';
 import { Button, ButtonLink, type ButtonSize } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { QueryErrorState, LoadingSkeleton } from '@/components/ui/states';
 import { useDataSource } from '@/features/data-source/provider';
 import { queryKeys } from '@/features/data-source/query-keys';
 import { ApiClientError, errorMessage } from '@/lib/api/client';
+import { cn } from '@/lib/cn';
 import { formatCoins } from '@/lib/format';
 import { showToast } from '@/lib/toast-store';
+import { nameCombination, playHint } from './play-hint';
 
 /**
  * Connects the game table to authoritative state. Card selection and sort order are local UI
@@ -41,6 +43,7 @@ export function GameScreen({ room }: { room: RoomDetail }) {
   const [selection, setSelection] = useState<ReadonlySet<CardId>>(new Set());
   const [sortMode, setSortMode] = useState<CardSortMode>('rank');
   const [resultDismissed, setResultDismissed] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   const game = useQuery({
     queryKey: queryKeys.game(room.id),
@@ -137,16 +140,12 @@ export function GameScreen({ room }: { room: RoomDetail }) {
   const leftovers = view.seats
     .filter((seat) => seat.seatIndex !== view.mySeat && seat.revealedCards?.length)
     .sort((a, b) => (a.finishedPlace ?? 0) - (b.finishedPlace ?? 0));
-  // Whether the cards form a combination does not depend on configurable rules, so this hint
-  // never contradicts the server. Whether they beat the table is left to the server.
-  const combination = selected.size ? classifyCombination([...selected], DEFAULT_GAME_RULES) : null;
-  const selectionHint = me.hasPassed
-    ? 'Bạn đã bỏ lượt vòng này'
-    : selected.size === 0
-      ? '0 lá đã chọn'
-      : combination
-        ? `${describeCombination(combination)} · ${selected.size} lá`
-        : 'Không phải bộ hợp lệ';
+  // The same engine check as the server's, with this match's rules: invalid plays are disabled
+  // and the hint says why. The server still decides.
+  const hint = playHint(view, [...selected]);
+  const onTable = view.currentTrick
+    ? classifyCombination(view.currentTrick.cards, view.rules ?? DEFAULT_GAME_RULES)
+    : null;
 
   const toggle = (card: CardId) => {
     const next = new Set(selected);
@@ -178,6 +177,16 @@ export function GameScreen({ room }: { room: RoomDetail }) {
                 {view.entryFee === 0 ? 'Miễn phí' : `Cược ${formatCoins(view.entryFee)} xu`}
               </span>
             </h1>
+            {finished ? null : (
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<LogOut aria-hidden className="size-4" />}
+                onClick={() => setConfirmLeave(true)}
+              >
+                Rời bàn
+              </Button>
+            )}
             <div className="ml-auto">
               <TurnIndicator
                 isMyTurn={isMyTurn}
@@ -197,6 +206,7 @@ export function GameScreen({ room }: { room: RoomDetail }) {
           ) : (
             <CurrentTrick
               trick={view.currentTrick}
+              description={onTable ? nameCombination(onTable) : null}
               playerName={nameOf}
               leaderName={view.turnSeat === null ? null : nameOf(view.turnSeat)}
             />
@@ -219,8 +229,14 @@ export function GameScreen({ room }: { room: RoomDetail }) {
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <p className="hidden text-sm text-white/70 sm:block" aria-live="polite">
-                {selectionHint}
+              <p
+                className={cn(
+                  'hidden text-sm sm:block',
+                  selected.size > 0 && !hint.canPlay ? 'text-red-200' : 'text-white/70',
+                )}
+                aria-live="polite"
+              >
+                {hint.message}
               </p>
               <div className="ml-auto flex flex-1 justify-end gap-2 sm:flex-none">
                 <Button
@@ -252,12 +268,14 @@ export function GameScreen({ room }: { room: RoomDetail }) {
                   Bỏ lượt
                 </Button>
                 <Button
-                  disabled={!isMyTurn || !combination || busy}
+                  disabled={!hint.canPlay || busy}
                   loading={play.isPending}
                   onClick={() => play.mutate(sortCards([...selected]))}
                   className="min-w-24"
+                  title={hint.message || undefined}
                 >
-                  Đánh{selected.size > 0 ? ` (${selected.size})` : ''}
+                  {hint.chop ? 'Chặt' : 'Đánh'}
+                  {selected.size > 0 ? ` (${selected.size})` : ''}
                 </Button>
               </div>
             </div>
@@ -272,11 +290,21 @@ export function GameScreen({ room }: { room: RoomDetail }) {
           />
         }
       />
+      <ConfirmDialog
+        open={confirmLeave}
+        title="Rời bàn khi ván chưa xong?"
+        description="Ván vẫn tiếp tục khi bạn rời bàn: hết giờ, hệ thống tự bỏ lượt hoặc đánh lá nhỏ nhất thay bạn. Bạn có thể quay lại ván này từ sảnh bất cứ lúc nào."
+        confirmLabel="Về sảnh"
+        cancelLabel="Ở lại"
+        onConfirm={() => router.push('/lobby')}
+        onCancel={() => setConfirmLeave(false)}
+      />
       {finished && result.data ? (
         <MatchResultModal
           open={!resultDismissed}
           result={result.data}
           myUserId={me.userId}
+          playerName={nameOf}
           onClose={() => setResultDismissed(true)}
           rematch={rematchButton('lg')}
         />

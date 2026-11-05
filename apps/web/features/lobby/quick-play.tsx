@@ -12,7 +12,12 @@ import { queryKeys } from '@/features/data-source/query-keys';
 import { errorMessage } from '@/lib/api/client';
 import { formatCoins } from '@/lib/format';
 
-export function QuickPlayButton() {
+/** `guard` runs first: the player may still have an unfinished game (see continue-game). */
+export function QuickPlayButton({
+  guard = (start) => start(),
+}: {
+  guard?: (start: () => void) => void;
+}) {
   const source = useDataSource();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -48,7 +53,7 @@ export function QuickPlayButton() {
         size="lg"
         className="w-full"
         icon={<Zap aria-hidden className="size-5" />}
-        onClick={() => setOpen(true)}
+        onClick={() => guard(() => setOpen(true))}
       >
         Chơi nhanh
       </Button>

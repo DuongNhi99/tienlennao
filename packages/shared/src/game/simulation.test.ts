@@ -12,6 +12,7 @@ import {
   type MatchState,
   startMatch,
 } from './engine';
+import { restoreMatchState } from './persistence';
 import { DEFAULT_GAME_RULES, type GameRules } from './rules';
 
 /**
@@ -27,21 +28,27 @@ function playMatch(seed: number, rules: GameRules, players = 4) {
 
   for (let step = 0; state.status === 'PLAYING'; step++) {
     if (step > 500) throw new Error(`Seed ${seed}: the match did not end`);
-    const seat = state.turnSeat!;
     checkInvariants(state, played);
 
-    // Someone else acting out of turn is always rejected.
-    const other = (seat + 1 + random.nextInt(players - 1)) % players;
+    // Someone else passing out of turn is always rejected; under `bombs.outOfTurn` they may
+    // chop instead, and then only with a chop.
+    const other = (state.turnSeat! + 1 + random.nextInt(players - 1)) % players;
     if (applyPass(state, other).ok)
       throw new Error(`Seed ${seed}: seat ${other} acted out of turn`);
+    const chops = legalPlays(state, other);
+    if (chops.length && !rules.bombs.outOfTurn) {
+      throw new Error(`Seed ${seed}: seat ${other} may play out of turn`);
+    }
+    const chopNow = chops.length > 0 && random.nextInt(2) === 0;
+    const seat = chopNow ? other : state.turnSeat!;
 
-    const plays = legalPlays(state, seat);
+    const plays = chopNow ? chops : legalPlays(state, seat);
     const options = plays.length + (canPass(state, seat) ? 1 : 0) + 1; // + timeout
     const choice = random.nextInt(options);
     const before = JSON.stringify(state);
     const result =
-      choice < plays.length
-        ? applyPlay(state, seat, plays[choice]!.cards)
+      chopNow || choice < plays.length
+        ? applyPlay(state, seat, plays[choice % plays.length]!.cards)
         : choice === plays.length && canPass(state, seat)
           ? applyPass(state, seat)
           : applyTimeout(state, seat);
@@ -51,7 +58,13 @@ function playMatch(seed: number, rules: GameRules, players = 4) {
     if (result.state.version !== state.version + 1) throw new Error(`Seed ${seed}: bad version`);
     for (const event of result.events) {
       if (event.type === 'PLAY') played.push(...event.combination.cards);
+      if (event.type === 'PLAY' && event.outOfTurn && event.choppedSeat === null) {
+        throw new Error(`Seed ${seed}: an out-of-turn play was not a chop`);
+      }
     }
+    // What the server stores reads back as the same state.
+    const restored = restoreMatchState(JSON.parse(JSON.stringify(result.state)));
+    if (!restored.ok) throw new Error(`Seed ${seed}: state not restorable (${restored.reason})`);
     log.push(...result.events);
     state = result.state;
   }
@@ -93,7 +106,26 @@ const RULE_SETS: [string, GameRules, number][] = [
     {
       ...DEFAULT_GAME_RULES,
       opening: 'HOLDER_LEADS_FREELY',
-      bombs: { threeConsecutivePairs: false, fourOfAKind: false, fourConsecutivePairs: false },
+      bombs: {
+        threeConsecutivePairs: false,
+        fourOfAKind: false,
+        fourConsecutivePairs: false,
+        threeConsecutivePairsBeatPairOfTwos: false,
+        bombsBeatBombs: false,
+        outOfTurn: false,
+      },
+    },
+    4,
+  ],
+  [
+    'out-of-turn chops, three pairs over a pair of 2s',
+    {
+      ...DEFAULT_GAME_RULES,
+      bombs: {
+        ...DEFAULT_GAME_RULES.bombs,
+        outOfTurn: true,
+        threeConsecutivePairsBeatPairOfTwos: true,
+      },
     },
     4,
   ],
@@ -105,6 +137,7 @@ describe.each(RULE_SETS)('simulated matches (%s)', (_, rules, players) => {
   it('finish with valid placements and conserve every card', { timeout: 60_000 }, () => {
     let instantWins = 0;
     let chops = 0;
+    let outOfTurn = 0;
     for (let seed = 1; seed <= 300; seed++) {
       const { state, log } = playMatch(seed, rules, players);
       const result = calculateMatchResult(state);
@@ -114,6 +147,7 @@ describe.each(RULE_SETS)('simulated matches (%s)', (_, rules, players) => {
       expect(log.filter((e) => e.type === 'MATCH_FINISHED')).toHaveLength(1);
       expect(log.at(-1)).toMatchObject({ type: 'MATCH_FINISHED', winnerSeat: result.winnerSeat });
       chops += result.chops.length;
+      outOfTurn += log.filter((e) => e.type === 'PLAY' && e.outOfTurn).length;
       if (result.reason === 'INSTANT_WIN') {
         instantWins++;
         continue;
@@ -131,8 +165,10 @@ describe.each(RULE_SETS)('simulated matches (%s)', (_, rules, players) => {
     // Instant wins are rare but happen (mostly six pairs) — the loop must still cover play.
     expect(instantWins).toBeLessThan(60);
     // Random play must reach bomb beats when they are enabled, and never otherwise.
-    const bombsEnabled = Object.values(rules.bombs).some(Boolean);
+    const { threeConsecutivePairs, fourOfAKind, fourConsecutivePairs } = rules.bombs;
+    const bombsEnabled = threeConsecutivePairs || fourOfAKind || fourConsecutivePairs;
     expect(chops > 0).toBe(bombsEnabled);
+    expect(outOfTurn > 0).toBe(rules.bombs.outOfTurn);
   });
 });
 

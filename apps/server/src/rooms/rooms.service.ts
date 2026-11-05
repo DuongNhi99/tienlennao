@@ -11,6 +11,7 @@ import type { Prisma, RoomStatus } from '@prisma/client';
 import {
   assertTransition,
   type CreateRoomRequest,
+  type CurrentRoom,
   MIN_PLAYERS_PER_MATCH,
   PLAYERS_PER_MATCH,
   type PublicPlayer,
@@ -170,6 +171,32 @@ export class RoomsService implements OnModuleInit, OnModuleDestroy {
       userId: user.id,
       displayName: user.profile?.displayName ?? '',
       avatarUrl: this.users.publicAvatarUrl(user.profile?.avatarUrl ?? null),
+    };
+  }
+
+  /**
+   * The room the user is seated in, if any. Seats exist only in open rooms (they are deleted
+   * when a room closes), so this is the unfinished game the user can continue.
+   */
+  async current(userId: string): Promise<CurrentRoom> {
+    const seat = await this.prisma.roomPlayer.findUnique({
+      where: { userId },
+      select: { room: { include: { _count: { select: { players: true } } } } },
+    });
+    if (!seat) return { room: null };
+    const { room } = seat;
+    return {
+      room: {
+        id: room.id,
+        code: room.code,
+        name: room.name,
+        visibility: room.visibility,
+        hasPassword: room.passwordHash !== null,
+        entryFee: room.entryFee,
+        playerCount: room._count.players,
+        maxPlayers: room.maxPlayers,
+        status: room.status,
+      },
     };
   }
 

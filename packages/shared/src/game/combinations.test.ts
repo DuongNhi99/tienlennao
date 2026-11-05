@@ -5,6 +5,8 @@ import {
   classifyCombination,
   type Combination,
   describeCombination,
+  isBomb,
+  isChop,
   listCombinations,
   validateCombination,
 } from './combinations';
@@ -230,6 +232,83 @@ describe('canBeatCombination — bombs', () => {
         withBombs({ threeConsecutivePairs: false, fourConsecutivePairs: false }),
       ),
     ).toBe(false);
+  });
+
+  it('three consecutive pairs chop a pair of 2s only where configured', () => {
+    const allowed = withBombs({ threeConsecutivePairsBeatPairOfTwos: true });
+    expect(beats(threePairs, pairOfTwos, allowed)).toBe(true);
+    expect(beats(threePairs, tripleTwos, allowed)).toBe(false);
+    // An extension of the three-pair power: nothing without it.
+    const withoutPower = withBombs({
+      threeConsecutivePairsBeatPairOfTwos: true,
+      threeConsecutivePairs: false,
+    });
+    expect(beats(threePairs, pairOfTwos, withoutPower)).toBe(false);
+    // Longer runs keep it even without the four-pair power.
+    expect(
+      beats(fourPairs, pairOfTwos, withBombs({ ...allowed.bombs, fourConsecutivePairs: false })),
+    ).toBe(true);
+  });
+
+  it('bombs chop each other only while bombsBeatBombs is on; 2s stay choppable', () => {
+    const apart = withBombs({ bombsBeatBombs: false });
+    expect(beats(quad, threePairs, apart)).toBe(false);
+    expect(beats(fourPairs, quad, apart)).toBe(false);
+    expect(beats(fivePairs, fourPairs, apart)).toBe(false);
+    for (const bomb of [quad, fourPairs]) {
+      expect(beats(bomb, singleTwo, apart)).toBe(true);
+      expect(beats(bomb, pairOfTwos, apart)).toBe(true);
+    }
+    expect(beats(threePairs, singleTwo, apart)).toBe(true);
+    // Same-shape comparisons are not chops and are unaffected.
+    expect(beats(['8S', '8C', '8D', '8H'], quad, apart)).toBe(true);
+    expect(beats(higherFourPairs, fourPairs, apart)).toBe(true);
+  });
+
+  it('chains a 2 through every bomb: 2 < 3 đôi thông < tứ quý < 4 đôi thông', () => {
+    const chain = [singleTwo, threePairs, quad, fourPairs];
+    for (let i = 1; i < chain.length; i++) expect(beats(chain[i]!, chain[i - 1]!)).toBe(true);
+    for (let i = 1; i < chain.length; i++) expect(beats(chain[i - 1]!, chain[i]!)).toBe(false);
+  });
+});
+
+describe('isChop and isBomb', () => {
+  const quad: CardId[] = ['7S', '7C', '7D', '7H'];
+  const threePairs: CardId[] = ['4S', '4C', '5S', '5C', '6S', '6C'];
+
+  it('is a chop only when a bomb power decides the beat', () => {
+    expect(isChop(combo(quad), combo(['2H']), rules)).toBe(true);
+    expect(isChop(combo(threePairs), combo(['2S']), rules)).toBe(true);
+    expect(isChop(combo(quad), combo(threePairs), rules)).toBe(true);
+    // Higher of the same shape: a normal beat.
+    expect(isChop(combo(['8S', '8C', '8D', '8H']), combo(quad), rules)).toBe(false);
+    expect(isChop(combo(['2H']), combo(['2S']), rules)).toBe(false);
+    // Not a beat at all.
+    expect(isChop(combo(quad), combo(['AH']), rules)).toBe(false);
+    expect(isChop(combo(threePairs), combo(['2C', '2H']), rules)).toBe(false);
+  });
+
+  it('knows which combinations are bombs', () => {
+    expect(isBomb(combo(quad))).toBe(true);
+    expect(isBomb(combo(threePairs))).toBe(true);
+    expect(isBomb(combo(['2S', '2C', '2D']))).toBe(false);
+    expect(isBomb(combo(['3S', '4S', '5S', '6S']))).toBe(false);
+  });
+});
+
+describe('straight edge cases (rule spec §3)', () => {
+  it.each([
+    [['QS', 'KC', 'AH'], 'STRAIGHT'],
+    [['JS', 'QC', 'KD', 'AH'], 'STRAIGHT'],
+    [['10S', 'JC', 'QD', 'KH', 'AS'], 'STRAIGHT'],
+    [['AS', '2C', '3D'], null],
+    [['KS', 'AC', '2D'], null],
+    [['2S', '3C', '4D'], null],
+    [['3S', '4C', '6D'], null],
+    [['QS', 'QC', 'KS', 'KC', 'AS', 'AC'], 'CONSECUTIVE_PAIRS'],
+    [['KS', 'KC', 'AS', 'AC', '2S', '2C'], null],
+  ] as [CardId[], string | null][])('%j → %s', (cards, type) => {
+    expect(classifyCombination(cards, rules)?.type ?? null).toBe(type);
   });
 });
 

@@ -2,6 +2,9 @@ import { z } from 'zod';
 import { CARDS_PER_PLAYER, MIN_PLAYERS_PER_MATCH, PLAYERS_PER_MATCH } from '../constants/game';
 import { MATCH_STATUSES } from '../constants/lifecycle';
 import { cardIdSchema } from '../game/cards';
+import { COMBINATION_TYPES } from '../game/combinations';
+import { LEFTOVER_PENALTY_KINDS } from '../game/hand-analysis';
+import { gameRulesSchema, INSTANT_WIN_KINDS } from '../game/rules';
 import { publicPlayerSchema } from './lobby';
 
 /**
@@ -55,8 +58,32 @@ export const playerGameViewSchema = z.object({
   turnDeadline: z.iso.datetime().nullable(),
   /** False when the current player must lead a new trick. */
   canPass: z.boolean(),
+  /**
+   * The rules this match plays by (public), so the client can judge a selection with the same
+   * engine code as the server (`checkPlay`). Null from an older API.
+   */
+  rules: gameRulesSchema.nullable().default(null),
+  /** The card the first play must contain (3♠ by default), until the first play. */
+  openingCard: cardIdSchema.nullable().default(null),
 });
 export type PlayerGameView = z.infer<typeof playerGameViewSchema>;
+
+export const leftoverPenaltySchema = z.object({
+  kind: z.enum(LEFTOVER_PENALTY_KINDS),
+  cards: z.array(cardIdSchema).min(1),
+  points: z.number().int().nonnegative(),
+});
+
+/** A bomb beat (chặt) as shown after the match: who chopped what from whom. */
+export const chopResultSchema = z.object({
+  seatIndex: seatIndexSchema,
+  choppedSeatIndex: seatIndexSchema,
+  combinationType: z.enum(COMBINATION_TYPES),
+  cards: z.array(cardIdSchema).min(1),
+  choppedType: z.enum(COMBINATION_TYPES),
+  choppedCards: z.array(cardIdSchema).min(1),
+});
+export type ChopResult = z.infer<typeof chopResultSchema>;
 
 export const matchResultSchema = z.object({
   matchId: z.uuid(),
@@ -72,9 +99,17 @@ export const matchResultSchema = z.object({
          */
         remainingCards: z.array(cardIdSchema).max(CARDS_PER_PLAYER).default([]),
         coinDelta: z.number().int(),
+        /** Leftover penalties (thúi heo, thối bombs); docs/GAME_RULES.md §11. */
+        penalties: z.array(leftoverPenaltySchema).default([]),
+        penaltyPoints: z.number().int().nonnegative().default(0),
       }),
     )
     .min(MIN_PLAYERS_PER_MATCH)
     .max(PLAYERS_PER_MATCH),
+  /** How the match ended; INSTANT_WIN means nobody played a card (tới trắng). */
+  reason: z.enum(['NORMAL', 'INSTANT_WIN']).default('NORMAL'),
+  instantWinKind: z.enum(INSTANT_WIN_KINDS).nullable().default(null),
+  /** Every chop of the match, in order. */
+  chops: z.array(chopResultSchema).default([]),
 });
 export type MatchResult = z.infer<typeof matchResultSchema>;

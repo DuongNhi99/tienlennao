@@ -1,7 +1,14 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DEFAULT_GAME_RULES, REPORT_REASON_LABELS_VI } from '@tienlen/shared';
+import {
+  DEFAULT_GAME_RULES,
+  gameRulesSchema,
+  REPORT_REASON_LABELS_VI,
+  RULE_VARIANT_KEYS,
+  RULE_VARIANTS,
+  type RuleVariantKey,
+} from '@tienlen/shared';
 import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -146,7 +153,12 @@ export function AdminPresetsView() {
       name: active?.name ?? 'Tiến Lên Miền Nam — mặc định',
       fees: (active?.allowedEntryFees ?? [0]).join(', '),
       timers: (active?.allowedTurnTimers ?? [15, 30, 45]).join(', '),
-      rules: JSON.stringify(active?.rules ?? DEFAULT_GAME_RULES, null, 2),
+      // Older presets are shown upgraded, with every current setting to edit.
+      rules: JSON.stringify(
+        gameRulesSchema.safeParse(active?.rules).data ?? active?.rules ?? DEFAULT_GAME_RULES,
+        null,
+        2,
+      ),
       activate: true,
     });
 
@@ -220,6 +232,22 @@ export function AdminPresetsView() {
               value={form.timers}
               onChange={(e) => setForm({ ...form, timers: e.target.value })}
             />
+            <SelectField
+              label="Bắt đầu từ mẫu luật"
+              defaultValue=""
+              onChange={(e) => {
+                const key = e.target.value as RuleVariantKey | '';
+                if (key)
+                  setForm({ ...form, rules: JSON.stringify(RULE_VARIANTS[key].rules, null, 2) });
+              }}
+            >
+              <option value="">Giữ luật đang soạn</option>
+              {RULE_VARIANT_KEYS.map((key) => (
+                <option key={key} value={key}>
+                  {RULE_VARIANTS[key].label}
+                </option>
+              ))}
+            </SelectField>
             <label className="flex flex-col gap-1.5 text-sm font-medium">
               Luật chơi (JSON, kiểm tra trên máy chủ theo docs/GAME_RULES.md)
               <textarea

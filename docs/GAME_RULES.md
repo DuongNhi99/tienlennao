@@ -1,4 +1,4 @@
-# Game rules — Tiến Lên Miền Nam (rule spec v2)
+# Game rules — Tiến Lên Miền Nam (rule spec v3)
 
 This is the authoritative rule specification for Tiến Lên Online. The engine in
 `packages/shared/src/game/` implements it; every rule below has unit tests in the same
@@ -8,6 +8,10 @@ engine never mixes variants silently: anything not listed as configurable is fix
 Configurable rules live in a `GameRules` object (`gameRulesSchema`, `rules.ts`). Presets are
 stored in `game_rule_configurations`; a match copies its preset into `matches.ruleSnapshot`
 when it starts, so later preset changes never affect a running or finished match.
+
+Spec v3 added the settings marked _(v3)_ below. Every v3 default reproduces v2 behaviour, and
+v2 rules (stored presets, snapshots of running matches) are upgraded on read with exactly those
+defaults, so nothing that was already playing changes.
 
 ## 1. Deck, players and dealing
 
@@ -65,13 +69,23 @@ plays normally against its own type but loses its special beats.
 | Four of a kind (tứ quý)               | `fourOfAKind`           | A single 2, a pair of 2s, three consecutive pairs                                  |
 | Four or more consecutive pairs        | `fourConsecutivePairs`  | A single 2, a pair of 2s, three consecutive pairs, four of a kind, any shorter run |
 
-Defaults: all three enabled. A run of four or more pairs always keeps the three-pair power
-(beating a single 2) when that power is enabled, even if `fourConsecutivePairs` is disabled.
+Defaults: all three enabled. A run of four or more pairs always keeps the three-pair powers
+(below) when they are enabled, even if `fourConsecutivePairs` is disabled.
+
+Further settings _(v3)_:
+
+| Setting                               | Default | Effect                                                                                                              |
+| ------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `threeConsecutivePairsBeatPairOfTwos` | off     | Three consecutive pairs also chop a pair of 2s (only with `threeConsecutivePairs`)                                  |
+| `bombsBeatBombs`                      | on      | Bombs chop other bombs: tứ quý over 3 đôi thông; 4+ đôi thông over tứ quý and shorter runs. Off: bombs chop 2s only |
+| `outOfTurn`                           | off     | Chops may be played out of turn (chặt ngang), §6                                                                    |
 
 - Bombs chain naturally: 2 → chopped by 3 đôi thông → chopped by tứ quý → chopped by
-  4 đôi thông.
-- Three consecutive pairs **cannot** beat a pair of 2s. A triple of 2s cannot be beaten at
-  all: no higher triple exists and no bomb beats a triple.
+  4 đôi thông (while `bombsBeatBombs` is on).
+- By default three consecutive pairs **cannot** beat a pair of 2s. A triple of 2s cannot be
+  beaten at all: no higher triple exists and no bomb beats a triple.
+- A chop is a beat decided by a bomb power (`isChop`); a higher combination of the same shape
+  (a higher tứ quý over a tứ quý) is a normal beat, not a chop.
 - A bomb led to open a trick is an ordinary combination of its type; it can be answered by a
   higher one of the same type or by a stronger bomb.
 - Every bomb beat is recorded as a **chop** (`chops` in the match state and result) with the
@@ -80,8 +94,16 @@ Defaults: all three enabled. A run of four or more pairs always keeps the three-
 
 ## 6. Out-of-turn plays
 
-Not supported. Every combination, including bombs, is played only on the player's own turn.
-A player who has passed cannot chop later in the same trick.
+By default every combination, including bombs, is played only on the player's own turn, and a
+player who has passed cannot chop later in the same trick.
+
+**Configurable** _(v3)_ (`bombs.outOfTurn`, chặt ngang): a player still in the match may play a
+**chop** (§5) at any moment, even if it is not their turn and even if they passed in this trick.
+Nothing else may be played out of turn: not a normal beat, not a lead, not a pass, and never a
+play on top of one's own combination. After the chop the player is back in the trick, and play
+continues with the next seat after them, as if they had played on their turn. The play event
+carries `outOfTurn: true`. Concurrent actions are ordered by the match lock and state version:
+an action decided on an older version is rejected (`STALE_STATE`).
 
 ## 7. Opening the match
 
@@ -92,8 +114,13 @@ A player who has passed cannot chop later in the same trick.
   - `HOLDER_MUST_PLAY_LOWEST` (default): the first combination of the match must contain
     that card.
   - `HOLDER_LEADS_FREELY`: the holder may lead any valid combination.
-- Every match starts this way. A rematch creates a new room (see the room lifecycle in
-  `IMPLEMENTATION_CHECKLIST.md`), so there is no "previous winner leads" rule.
+- **Configurable** _(v3)_ (`starter`):
+  - `LOWEST_CARD` (default): every match starts as above.
+  - `PREVIOUS_WINNER`: in a rematch room ("chơi tiếp" creates a new room linked to the old
+    one), the winner of the previous match takes the first turn and leads freely — there is no
+    opening card. When there was no previous match, or its winner did not join the rematch,
+    the lowest card opens as above. Instant-win ties (§12) are broken in seat order from
+    whoever takes the first turn.
 
 ## 8. Turns, passing and tricks
 
@@ -201,8 +228,58 @@ The mapping is exported as `GAME_VIOLATION_ERROR_CODES`. State versions, action 
 (idempotency), timing and identity-to-seat mapping are checked by the server before the
 engine is called (Phase 5). The engine increments `version` on every accepted action.
 
+The same check runs in the client: `checkPlay` judges a selection from one seat's point of
+view (rules, own hand, turn, table, opening card), and the game view carries the match's rules
+(and, to the opener only, the opening card), so the UI disables plays the server would refuse
+and says why. The server remains authoritative.
+
 ## 15. Determinism
 
 Engine functions are pure: they never mutate their input, never read the clock and never
 use randomness except through an injected random source. Given the same deal and the same
 actions, the engine always produces the same states and events.
+
+## 16. Regional variants
+
+`RULE_VARIANTS` (`rules.ts`) names ready-made presets that differ from the standard rules only
+where their name says; the admin preset form offers them as starting points:
+
+| Key                | Vietnamese                       | Difference                       |
+| ------------------ | -------------------------------- | -------------------------------- |
+| `STANDARD`         | Miền Nam chuẩn                   | none (`DEFAULT_GAME_RULES`)      |
+| `CHOP_OUT_OF_TURN` | Chặt ngang                       | `bombs.outOfTurn`                |
+| `WINNER_LEADS`     | Người thắng ván trước đánh trước | `starter: 'PREVIOUS_WINNER'`     |
+| `FIRST_FINISHER`   | Nhất ăn tất                      | `endCondition: 'FIRST_FINISHER'` |
+
+Not modelled in this version (each would need its own rule decision): a pass that only skips
+one turn instead of locking the player out of the trick, restrictions on finishing with a 2 or
+a bomb ("tới bằng heo"), "cóng", and points for chops.
+
+## 17. Persistence and continuing a match
+
+The server stores the engine state after every action (`matches.stateSnapshot`, format `v: 1`)
+together with the event log. Before any action or view, `restoreMatchState` validates the
+stored state — its shape, that no card is held twice, that pass flags match the players, that
+no finished seat holds cards (except the winner of an instant win) or the turn, and that the
+table is a valid combination — and upgrades older rule versions. A match therefore resumes
+exactly where it stopped after a reload, a reconnect or a server restart, and a damaged
+snapshot is refused rather than played on. Players continue a running match from the lobby
+(`GET /rooms/current`); a running match cannot be abandoned (the turn timer, §13, plays for
+an absent player), while a waiting room can be left.
+
+## 18. Results, history and replay
+
+- The match result lists, per player, the placement, the cards still held (revealed only
+  after the match), each leftover penalty item (§11) and the total, the coins, and every chop.
+  After an instant win it names the kind.
+- History adds the rules the match was played by (its snapshot), the leftovers and chops, and
+  the public timeline. `buildReplay` turns the timeline into frames — table, card counts,
+  passes and places after each move — for a step-by-step replay. The deal is never published,
+  so the replay shows card counts, not hands.
+
+## 19. Bots
+
+`chooseBotMove` (`bot.ts`) is a simple opponent used by the development preview and by tests.
+It chooses only among `legalPlays`, so it obeys every rule the engine enforces: finish when
+possible; shed ordinary cards first; chop only a 2 or a bomb, with the smallest bomb; spend a 2
+only on a high table or near the end; otherwise pass. Production matches have no bots.

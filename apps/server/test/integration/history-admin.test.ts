@@ -95,6 +95,17 @@ describe('match history', () => {
     const cards = detail.timeline.flatMap((e) => e.cards ?? []);
     expect(new Set(cards).size).toBe(cards.length);
     expect(JSON.stringify(detail)).not.toContain('"hands"');
+    // The finished match also shows what was left in each hand, its penalties and the rules.
+    expect(detail.rules).toMatchObject({ specVersion: 3, starter: 'LOWEST_CARD' });
+    expect(detail.leftovers.map((l) => l.seatIndex)).toEqual([0, 1, 2, 3]);
+    const left = detail.leftovers.flatMap((l) => l.remainingCards);
+    expect(new Set([...cards, ...left]).size).toBe(52);
+    for (const leftover of detail.leftovers) {
+      const points = leftover.penalties.reduce((sum, item) => sum + item.points, 0);
+      expect(leftover.penaltyPoints).toBe(points);
+      const player = detail.players.find((p) => p.seatIndex === leftover.seatIndex)!;
+      expect(leftover.remainingCards).toHaveLength(player.cardsRemaining!);
+    }
 
     const [outsider] = await players(1);
     const res = await outsider!.http.get(`${API}/history/${matchId}`).expect(404);

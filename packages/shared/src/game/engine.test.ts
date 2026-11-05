@@ -8,12 +8,14 @@ import {
   applyTimeout,
   calculateMatchResult,
   canPass,
+  checkPlay,
   determineOpeningPlayer,
   determineWinner,
   GAME_VIOLATION_ERROR_CODES,
   GAME_VIOLATIONS,
   legalPlays,
   type MatchState,
+  playContext,
   startMatch,
 } from './engine';
 import { DEFAULT_GAME_RULES, type GameRules } from './rules';
@@ -429,5 +431,241 @@ describe('calculateMatchResult', () => {
     expect(result.placements.map((p) => p.seat)).toEqual([2, 3, 0, 1]);
     expect(result.placements.every((p) => p.penaltyPoints === 0)).toBe(true);
     expect(result.placements[1]!.remainingCards).toHaveLength(13);
+  });
+});
+
+describe('checkPlay', () => {
+  it('gives a client the same verdict as the engine, from public information only', () => {
+    const s = makeState(['3S 4S 5S 9H', '6C 7C 7D', '8D 9D', 'JH QH'], {
+      turnSeat: 1,
+      table: table(0, '5S'),
+    });
+    // What the player's own view carries: rules, their hand, the turn, the table.
+    const fromView = {
+      rules: DEFAULT_GAME_RULES,
+      seat: 1,
+      hand: cards('6C 7C 7D'),
+      turnSeat: 1,
+      table: table(0, '5S'),
+      openingCard: null,
+      active: true,
+    };
+    for (const selection of ['6C', '7C 7D', '6C 7C', '', '8D']) {
+      const engine = applyPlay(s, 1, cards(selection));
+      const client = checkPlay(fromView, cards(selection));
+      expect(client.ok).toBe(engine.ok);
+      if (!client.ok && !engine.ok) expect(client.violation).toBe(engine.violation);
+    }
+    expect(checkPlay(playContext(s, 1), cards('7C 7D'))).toEqual({
+      ok: false,
+      violation: 'CANNOT_BEAT',
+    });
+  });
+
+  it('reports whether a play is a chop', () => {
+    const s = makeState(['2H', '7S 7C 7D 7H', '3D', '4D'], { turnSeat: 1, table: table(0, '2H') });
+    expect(checkPlay(playContext(s, 1), cards('7S 7C 7D 7H'))).toMatchObject({
+      ok: true,
+      chop: true,
+      outOfTurn: false,
+    });
+  });
+});
+
+describe('out-of-turn chops (bombs.outOfTurn)', () => {
+  const rules: GameRules = {
+    ...NO_INSTANT_WINS,
+    bombs: { ...DEFAULT_GAME_RULES.bombs, outOfTurn: true },
+  };
+  // Seat 0 has played 2♣ and it is seat 1's turn. Seat 2 holds a four of a kind, seat 3 three
+  // consecutive pairs.
+  const onTable = (overrides: Partial<MatchState> = {}) =>
+    makeState(
+      ['3S', '2D 9C', '7S 7C 7D 7H 8S', '4D 4H 5D 5H 6D 6H JC'],
+      { turnSeat: 1, table: table(0, '2C'), ...overrides },
+      rules,
+    );
+  const notYourTurn = { ok: false, violation: 'NOT_YOUR_TURN' };
+
+  it('lets another player chop a 2 before their turn; play continues after them', () => {
+    const result = applyPlay(onTable(), 2, cards('7S 7C 7D 7H'));
+    expect(result).toMatchObject({
+      ok: true,
+      events: [{ type: 'PLAY', seat: 2, choppedSeat: 0, outOfTurn: true }],
+    });
+    const s = ok(result);
+    expect(s).toMatchObject({ turnSeat: 3, table: { seat: 2 } });
+    expect(s.chops).toHaveLength(1);
+  });
+
+  it('lets a player who passed come back with a chop', () => {
+    const s = ok(
+      applyPlay(onTable({ passed: [false, false, true, false] }), 2, cards('7S 7C 7D 7H')),
+    );
+    expect(s.passed).toEqual([false, false, false, false]);
+    expect(s.turnSeat).toBe(3);
+  });
+
+  it('allows chained chops out of turn: three pairs on a 2, then four of a kind', () => {
+    let s = ok(applyPlay(onTable(), 3, cards('4D 4H 5D 5H 6D 6H')));
+    expect(s).toMatchObject({ turnSeat: 0, table: { seat: 3 } });
+    s = ok(applyPlay(s, 2, cards('7S 7C 7D 7H')));
+    expect(s.chops.map((c) => [c.seat, c.choppedSeat])).toEqual([
+      [3, 0],
+      [2, 3],
+    ]);
+  });
+
+  it('refuses anything else out of turn', () => {
+    // A higher single is a normal beat: it waits for the player's turn.
+    expect(applyPlay(onTable(), 1, cards('2D'))).toMatchObject({ ok: true });
+    expect(applyPlay(onTable({ turnSeat: 3 }), 1, cards('2D'))).toEqual(notYourTurn);
+    // Nothing to chop when leading, and never your own play.
+    expect(applyPlay(onTable({ table: null }), 2, cards('7S 7C 7D 7H'))).toEqual(notYourTurn);
+    expect(applyPlay(onTable({ table: table(2, '2S') }), 2, cards('7S 7C 7D 7H'))).toEqual(
+      notYourTurn,
+    );
+    // Passing out of turn is never allowed.
+    expect(applyPass(onTable(), 2)).toEqual(notYourTurn);
+  });
+
+  it('is off by default', () => {
+    const s = makeState(
+      ['3S', '2S 9C', '7S 7C 7D 7H 8S', '5D'],
+      { turnSeat: 1, table: table(0, '2H') },
+      NO_INSTANT_WINS,
+    );
+    expect(applyPlay(s, 2, cards('7S 7C 7D 7H'))).toEqual(notYourTurn);
+    expect(legalPlays(s, 2)).toEqual([]);
+  });
+
+  it('lists only chops as legal plays for players whose turn it is not', () => {
+    const plays = legalPlays(onTable(), 3).map((c) => c.cards.join(' '));
+    expect(plays).toEqual(['4D 4H 5D 5H 6D 6H']);
+  });
+});
+
+describe('starting player (rules.starter)', () => {
+  const winnerLeads: GameRules = { ...NO_INSTANT_WINS, starter: 'PREVIOUS_WINNER' };
+
+  it('lets the previous winner lead freely', () => {
+    const { state } = startMatch(deal(['3S']), winnerLeads, { previousWinnerSeat: 2 });
+    expect(state).toMatchObject({ turnSeat: 2, openingCard: null });
+    expect(applyPlay(state, 2, [state.hands[2]!.at(-1)!])).toMatchObject({ ok: true });
+  });
+
+  it('falls back to the lowest card without a previous winner', () => {
+    const { state } = startMatch(deal(['', '3S']), winnerLeads, { previousWinnerSeat: null });
+    expect(state).toMatchObject({ turnSeat: 1, openingCard: '3S' });
+  });
+
+  it('ignores the previous winner under the standard rule', () => {
+    const { state } = startMatch(deal(['', '3S']), NO_INSTANT_WINS, { previousWinnerSeat: 3 });
+    expect(state).toMatchObject({ turnSeat: 1, openingCard: '3S' });
+  });
+
+  it('rejects a previous winner who is not seated in this match', () => {
+    const hands = deal([]).slice(0, 2);
+    expect(() => startMatch(hands, winnerLeads, { previousWinnerSeat: 3 })).toThrow(/previous/);
+  });
+
+  it('breaks instant-win ties in seat order from the previous winner', () => {
+    const rules: GameRules = { ...winnerLeads, instantWins: ['FOUR_TWOS'] };
+    const { state } = startMatch(deal(['', '', '2S 2C 2D 2H']), rules, { previousWinnerSeat: 1 });
+    expect(state.instantWin).toEqual({ seat: 2, kind: 'FOUR_TWOS' });
+  });
+});
+
+describe('a whole match, scripted', () => {
+  it('plays tricks, finishes players in sequence and never gives a finished player a turn', () => {
+    let s = makeState(['3S 9S', '4C 2H', '5D 6D', '7H 8H'], { openingCard: '3S' });
+    const act = (result: ActionResult) => {
+      s = ok(result);
+      if (s.turnSeat !== null) expect(s.finishOrder).not.toContain(s.turnSeat);
+    };
+    act(applyPlay(s, 0, cards('3S')));
+    act(applyPlay(s, 1, cards('4C')));
+    act(applyPlay(s, 2, cards('5D')));
+    act(applyPlay(s, 3, cards('7H')));
+    act(applyPass(s, 0));
+    act(applyPlay(s, 1, cards('2H'))); // seat 1 finishes first
+    expect(s.finishOrder).toEqual([1]);
+    act(applyPass(s, 2));
+    act(applyPass(s, 3));
+    // Seat 0 passed earlier in this trick, so the trick ends; the lead goes to the seat after
+    // the finished player.
+    expect(s).toMatchObject({ table: null, turnSeat: 2, passed: [false, false, false, false] });
+    act(applyPlay(s, 2, cards('6D'))); // seat 2 finishes second
+    act(applyPass(s, 3));
+    act(applyPass(s, 0));
+    expect(s).toMatchObject({ table: null, turnSeat: 3 });
+    act(applyPlay(s, 3, cards('8H'))); // seat 3 finishes third: the match ends
+    expect(s).toMatchObject({ status: 'FINISHED', turnSeat: null, finishOrder: [1, 2, 3] });
+    expect(calculateMatchResult(s).placements.map((p) => [p.seat, p.placement])).toEqual([
+      [1, 1],
+      [2, 2],
+      [3, 3],
+      [0, 4],
+    ]);
+    for (const seat of [0, 1, 2, 3]) expect(applyPass(s, seat)).toMatchObject({ ok: false });
+  });
+});
+
+describe('thúi heo and other leftover penalties', () => {
+  const finished = (hands: string[], finishOrder: number[], rules = DEFAULT_GAME_RULES) =>
+    calculateMatchResult(
+      makeState(hands, { status: 'FINISHED', turnSeat: null, finishOrder }, rules),
+    );
+
+  it('penalizes a single 2 left in the last hand', () => {
+    const last = finished(['', '', '', '2S 4C'], [0, 1, 2]).placements[3]!;
+    expect(last.penalties).toEqual([{ kind: 'BLACK_TWO', cards: ['2S'], points: 1 }]);
+    expect(last.penaltyPoints).toBe(1);
+  });
+
+  it('penalizes each card of a pair of 2s', () => {
+    const last = finished(['', '', '', '2D 2H 4C'], [0, 1, 2]).placements[3]!;
+    expect(last.penalties.map((p) => [p.kind, p.cards])).toEqual([
+      ['RED_TWO', ['2D']],
+      ['RED_TWO', ['2H']],
+    ]);
+    expect(last.penaltyPoints).toBe(4);
+  });
+
+  it('penalizes every player still holding 2s when the match ends at the first finisher', () => {
+    const rules: GameRules = { ...DEFAULT_GAME_RULES, endCondition: 'FIRST_FINISHER' };
+    const result = finished(['', '2S 9C', '2H 2C', '5D 6D 7D'], [0], rules);
+    const bySeat = Object.fromEntries(result.placements.map((p) => [p.seat, p.penaltyPoints]));
+    expect(bySeat).toEqual({ 0: 0, 1: 1, 2: 3, 3: 0 });
+  });
+
+  it('never penalizes 2s that were played, including the winning one', () => {
+    let s = makeState(['2H', '3S 2S', '4D', '5D'], { turnSeat: 0 });
+    s = ok(applyPlay(s, 0, cards('2H'))); // finishes with a 2
+    s = ok(applyPass(s, 1));
+    s = ok(applyPass(s, 2));
+    s = ok(applyPass(s, 3));
+    s = ok(applyPlay(s, 1, cards('2S')));
+    s = ok(applyPass(s, 2));
+    s = ok(applyPass(s, 3));
+    s = ok(applyPlay(s, 1, cards('3S')));
+    s = ok(applyPlay(s, 2, cards('4D')));
+    expect(s.status).toBe('FINISHED');
+    const result = calculateMatchResult(s);
+    expect(result.placements.map((p) => [p.seat, p.penaltyPoints])).toEqual([
+      [0, 0],
+      [1, 0],
+      [2, 0],
+      [3, 0],
+    ]);
+  });
+
+  it('penalizes bombs left in hand (thối tứ quý, thối đôi thông)', () => {
+    const hand = '9S 9C 9D 9H 4S 4C 5S 5C 6S 6C';
+    const last = finished(['', '', '', hand], [0, 1, 2]).placements[3]!;
+    expect(last.penalties.map((p) => [p.kind, p.points])).toEqual([
+      ['FOUR_OF_A_KIND', 4],
+      ['THREE_CONSECUTIVE_PAIRS', 3],
+    ]);
   });
 });
