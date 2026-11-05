@@ -16,7 +16,7 @@ import { useState } from 'react';
 import { CardHand } from '@/components/game/card-hand';
 import { CurrentTrick } from '@/components/game/current-trick';
 import { GameTable } from '@/components/game/game-table';
-import { LeftoverHands } from '@/components/game/leftover-hands';
+// import { LeftoverHands } from '@/components/game/leftover-hands';
 import { MatchResultModal } from '@/components/game/match-result-modal';
 import { PlayerSeat } from '@/components/game/player-seat';
 import { TurnIndicator } from '@/components/game/turn-indicator';
@@ -135,11 +135,12 @@ export function GameScreen({ room }: { room: RoomDetail }) {
   const isMyTurn = view.turnSeat === view.mySeat;
   const busy = play.isPending || pass.isPending;
   const me = view.seats[view.mySeat]!;
-  // After the match, opponents who still held cards show them face up; our own leftovers are
-  // already visible in the hand below.
-  const leftovers = view.seats
-    .filter((seat) => seat.seatIndex !== view.mySeat && seat.revealedCards?.length)
-    .sort((a, b) => (a.finishedPlace ?? 0) - (b.finishedPlace ?? 0));
+  // Hidden for now: opponents' leftover cards are not shown face up after the match.
+  // // After the match, opponents who still held cards show them face up; our own leftovers are
+  // // already visible in the hand below.
+  // const leftovers = view.seats
+  //   .filter((seat) => seat.seatIndex !== view.mySeat && seat.revealedCards?.length)
+  //   .sort((a, b) => (a.finishedPlace ?? 0) - (b.finishedPlace ?? 0));
   // The same engine check as the server's, with this match's rules: invalid plays are disabled
   // and the hint says why. The server still decides.
   const hint = playHint(view, [...selected]);
@@ -201,16 +202,17 @@ export function GameScreen({ room }: { room: RoomDetail }) {
         top={layout.top ?? null}
         left={layout.left ?? null}
         center={
-          finished && leftovers.length ? (
-            <LeftoverHands seats={leftovers} />
-          ) : (
-            <CurrentTrick
-              trick={view.currentTrick}
-              description={onTable ? nameCombination(onTable) : null}
-              playerName={nameOf}
-              leaderName={view.turnSeat === null ? null : nameOf(view.turnSeat)}
-            />
-          )
+          // Hidden for now: show the last trick instead of opponents' leftover hands.
+          // finished && leftovers.length ? (
+          //   <LeftoverHands seats={leftovers} />
+          // ) : (
+          <CurrentTrick
+            trick={view.currentTrick}
+            description={onTable ? nameCombination(onTable) : null}
+            playerName={nameOf}
+            leaderName={view.turnSeat === null ? null : nameOf(view.turnSeat)}
+          />
+          // )
         }
         actions={
           finished ? (

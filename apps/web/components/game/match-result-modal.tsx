@@ -8,7 +8,7 @@ import { Modal } from '@/components/ui/modal';
 import { UserAvatar } from '@/components/player/user-avatar';
 import { cn } from '@/lib/cn';
 import { ChopList, PenaltyLines } from './match-penalties';
-import { RevealedCards } from './revealed-cards';
+// import { RevealedCards } from './revealed-cards';
 import { formatCoinDelta } from '@/lib/format';
 
 interface MatchResultModalProps {
@@ -127,13 +127,14 @@ export function MatchResultModal({
                 >
                   {formatCoinDelta(p.coinDelta)} xu
                 </span>
+                {/* Hidden for now: the cards each player still held.
                 {p.remainingCards.length ? (
                   <RevealedCards
                     cards={p.remainingCards}
                     label={`Bài còn lại của ${owner}: ${p.remainingCards.length} lá`}
                     className="basis-full justify-center [--card-w:1.75rem] sm:[--card-w:2rem]"
                   />
-                ) : null}
+                ) : null} */}
                 <PenaltyLines
                   penalties={p.penalties}
                   penaltyPoints={p.penaltyPoints}

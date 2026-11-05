@@ -10,7 +10,7 @@ import {
 import { Flag } from 'lucide-react';
 import { useState } from 'react';
 import { ChopList, PenaltyLines } from '@/components/game/match-penalties';
-import { RevealedCards } from '@/components/game/revealed-cards';
+// import { RevealedCards } from '@/components/game/revealed-cards';
 import { UserAvatar } from '@/components/player/user-avatar';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { SelectField } from '@/components/ui/form-fields';
@@ -22,9 +22,9 @@ import { errorMessage } from '@/lib/api/client';
 import { cn } from '@/lib/cn';
 import { formatCoinDelta, formatCoins, formatDateTime } from '@/lib/format';
 import { showToast } from '@/lib/toast-store';
-import { describeEvent } from './describe-event';
+// import { describeEvent } from './describe-event';
 import { formatDuration, placementLabel } from './history-list';
-import { MatchReplay } from './match-replay';
+// import { MatchReplay } from './match-replay';
 import { summarizeRules } from './rules-summary';
 
 function ReportDialog({
@@ -196,13 +196,14 @@ export function HistoryDetail({ matchId }: { matchId: string }) {
                     onClick={() => setReporting(p)}
                   />
                 ) : null}
+                {/* Hidden for now: the cards each player still held.
                 {left?.remainingCards.length ? (
                   <RevealedCards
                     cards={left.remainingCards}
                     label={`Bài còn lại của ${owner}: ${left.remainingCards.length} lá`}
                     className="basis-full justify-center [--card-w:1.75rem]"
                   />
-                ) : null}
+                ) : null} */}
                 {left ? (
                   <PenaltyLines
                     penalties={left.penalties}
@@ -221,6 +222,7 @@ export function HistoryDetail({ matchId }: { matchId: string }) {
         ) : null}
       </section>
 
+      {/* Hidden for now: the replay and the move-by-move timeline.
       {m.timeline.length ? (
         <section aria-labelledby="replay-heading" className={section}>
           <h2 id="replay-heading" className="mb-3 font-semibold">
@@ -251,7 +253,7 @@ export function HistoryDetail({ matchId }: { matchId: string }) {
             ))}
           </ol>
         )}
-      </section>
+      </section> */}
 
       {m.rules ? (
         <section aria-labelledby="rules-heading" className={section}>

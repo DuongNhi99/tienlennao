@@ -130,15 +130,17 @@ test('a browser player plays a full match against three API clients', async ({ p
 
   await botsDone;
   await expect(result.getByRole('list', { name: 'Thứ hạng' }).locator('> li')).toHaveCount(4);
-  // Last place still held cards: they are revealed under that player's row.
-  await expect(result.getByRole('list', { name: /^Bài còn lại của/ }).first()).toBeVisible();
+  // Hidden for now (see match-result-modal.tsx): leftover cards are not revealed.
+  // // Last place still held cards: they are revealed under that player's row.
+  // await expect(result.getByRole('list', { name: /^Bài còn lại của/ }).first()).toBeVisible();
   await Promise.all(bots.map((bot) => bot.dispose()));
 
   // The match is in the history, with its public timeline, and the result was notified.
   await page.goto('/history');
   await page.getByRole('list', { name: 'Ván đấu' }).getByRole('link').first().click();
   await expect(page.getByRole('heading', { name: 'Kết quả' })).toBeVisible();
-  await expect(page.getByText(/đánh bài lẻ: 3 bích/)).toBeVisible();
+  // Hidden for now (see history-detail.tsx): the timeline is not shown.
+  // await expect(page.getByText(/đánh bài lẻ: 3 bích/)).toBeVisible();
   await page.goto('/notifications');
   await expect(page.getByText(/Hạng \d\/4 tại phòng/)).toBeVisible();
 });

@@ -8,7 +8,8 @@ test('history lists matches and shows a match with its public timeline', async (
   await expect(page.getByRole('heading', { name: 'Lịch sử ván đấu' })).toBeVisible();
   await page.getByRole('link', { name: /Hạng 1\/4 · Bàn vui vẻ/ }).click();
   await expect(page.getByRole('heading', { name: 'Kết quả' })).toBeVisible();
-  await expect(page.getByText('Bạn đánh bài lẻ: 3 bích')).toBeVisible();
+  // Hidden for now (see history-detail.tsx): the timeline is not shown.
+  // await expect(page.getByText('Bạn đánh bài lẻ: 3 bích')).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await snap(page, testInfo, 'history-detail');
 
