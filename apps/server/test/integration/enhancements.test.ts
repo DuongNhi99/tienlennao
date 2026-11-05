@@ -36,6 +36,17 @@ let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestApp((builder) => builder.overrideProvider(Dealer).useValue(dealer));
+  // The test database starts empty (as in CI): store the achievements this suite checks.
+  for (const [code, rewardAmount] of [
+    ['FIRST_MATCH', 200],
+    ['FIRST_WIN', 500],
+  ] as const) {
+    await ctx.prisma.achievement.upsert({
+      where: { code },
+      update: { rewardAmount, isActive: true },
+      create: { code, name: code, description: code, rewardAmount },
+    });
+  }
 });
 
 afterAll(async () => {
