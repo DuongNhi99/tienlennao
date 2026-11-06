@@ -1,9 +1,10 @@
 import type { GameSeat } from '@tienlen/shared';
 import { WifiOff } from 'lucide-react';
-import type { CSSProperties } from 'react';
+// Hidden for now: the card-count icon (see below).
+// import type { CSSProperties } from 'react';
 import { UserAvatar } from '@/components/player/user-avatar';
 import { cn } from '@/lib/cn';
-import { CardBack } from './playing-card';
+// import { CardBack } from './playing-card';
 
 interface PlayerSeatProps {
   seat: GameSeat;
@@ -13,7 +14,7 @@ interface PlayerSeatProps {
 
 const PLACE_LABEL = ['', 'Về nhất', 'Về nhì', 'Về ba', 'Về bét'];
 
-/** An opponent at the table: avatar, name, remaining cards, and status as text (not colour alone). */
+/** An opponent at the table: avatar, name, and status as text (not colour alone). */
 export function PlayerSeat({ seat, isTurn, compact = false }: PlayerSeatProps) {
   const status = seat.finishedPlace
     ? PLACE_LABEL[seat.finishedPlace]
@@ -27,7 +28,9 @@ export function PlayerSeat({ seat, isTurn, compact = false }: PlayerSeatProps) {
 
   return (
     <div
-      aria-label={`${seat.displayName}, còn ${seat.cardCount} lá${status ? `, ${status}` : ''}`}
+      // Hidden for now: the label used to say how many cards the player holds.
+      // aria-label={`${seat.displayName}, còn ${seat.cardCount} lá${status ? `, ${status}` : ''}`}
+      aria-label={`${seat.displayName}${status ? `, ${status}` : ''}`}
       className={cn(
         'flex items-center gap-2 rounded-xl px-2 py-1.5 transition-colors',
         compact ? 'flex-col text-center' : 'flex-row',
@@ -42,6 +45,7 @@ export function PlayerSeat({ seat, isTurn, compact = false }: PlayerSeatProps) {
       />
       <div className={cn('min-w-0', compact && 'w-20')}>
         <p className="truncate text-sm font-semibold">{seat.displayName}</p>
+        {/* Hidden for now: how many cards the player still holds.
         <div
           className={cn(
             'flex items-center gap-1.5 text-xs text-white/80',
@@ -53,6 +57,7 @@ export function PlayerSeat({ seat, isTurn, compact = false }: PlayerSeatProps) {
           </span>
           <span>{seat.cardCount} lá</span>
         </div>
+        */}
         {status ? (
           <p
             className={cn(
